@@ -74,6 +74,11 @@ main{padding:14px; max-width:640px; margin:0 auto;}
   background:var(--accent-light); cursor:zoom-in;
 }
 .entry-thumb.noimg{display:flex; align-items:center; justify-content:center; font-size:26px;}
+.entry-thumb-wrap{position:relative; flex-shrink:0;}
+.entry-thumb-badge{
+  position:absolute; bottom:3px; right:3px; background:rgba(0,0,0,.6); color:#fff;
+  font-size:10px; padding:1px 6px; border-radius:10px; font-weight:700; pointer-events:none;
+}
 .entry-body{flex:1; min-width:0;}
 .entry-date{font-size:12px; color:var(--text-sub);}
 .entry-tags{display:flex; flex-wrap:wrap; gap:5px; margin:5px 0;}
@@ -99,11 +104,19 @@ textarea{resize:vertical; min-height:80px;}
   background:#fdf9f2; display:flex; align-items:center; justify-content:center;
   min-height:52px; text-align:center; font-size:13px; color:var(--accent-dark); font-weight:600;
 }
-.photo-preview-wrap{position:relative; margin-top:10px;}
-.photo-preview{width:100%; max-height:280px; object-fit:cover; border-radius:12px;}
-.photo-remove{
-  position:absolute; top:8px; right:8px; background:rgba(0,0,0,.55); color:#fff;
-  border:none; border-radius:50%; width:28px; height:28px; font-size:15px;
+.photo-preview-list{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;}
+.photo-preview-item{position:relative; width:88px; height:88px;}
+.photo-preview-item img{
+  width:100%; height:100%; object-fit:cover; border-radius:10px; cursor:zoom-in;
+  background:var(--accent-light);
+}
+.photo-item-remove{
+  position:absolute; top:-6px; right:-6px; background:rgba(0,0,0,.6); color:#fff;
+  border:none; border-radius:50%; width:24px; height:24px; font-size:13px; line-height:1;
+}
+.photo-count-badge{
+  position:absolute; bottom:4px; right:4px; background:rgba(0,0,0,.6); color:#fff;
+  font-size:10px; padding:1px 6px; border-radius:10px; font-weight:700;
 }
 .gps-info{font-size:12px; color:var(--text-sub); margin-top:6px;}
 .gps-info.ok{color:#4a7a4a;}
@@ -170,6 +183,17 @@ textarea{resize:vertical; min-height:80px;}
   background:rgba(255,255,255,.15); color:#fff; border:none; width:38px; height:38px;
   border-radius:50%; font-size:18px; z-index:310;
 }
+.photo-viewer-nav{
+  position:absolute; top:50%; transform:translateY(-50%); background:rgba(255,255,255,.15);
+  color:#fff; border:none; width:44px; height:44px; border-radius:50%; font-size:26px;
+  line-height:1; z-index:310;
+}
+.photo-viewer-prev{left:10px;}
+.photo-viewer-next{right:10px;}
+.photo-viewer-counter{
+  position:absolute; top:calc(14px + env(safe-area-inset-top)); left:0; right:0;
+  text-align:center; color:rgba(255,255,255,.85); font-size:13px; font-weight:600; z-index:305;
+}
 .photo-viewer-hint{
   position:absolute; bottom:calc(16px + env(safe-area-inset-bottom)); left:0; right:0;
   text-align:center; color:rgba(255,255,255,.6); font-size:12px; z-index:310; pointer-events:none;
@@ -206,19 +230,16 @@ textarea{resize:vertical; min-height:80px;}
   <!-- 入力ビュー -->
   <div class="view" id="formView">
     <div class="card">
-      <label>写真</label>
+      <label>写真（複数登録できます）</label>
       <div class="photo-buttons">
         <label class="photo-btn">📷 撮影する
           <input type="file" accept="image/*" capture="environment" id="cameraInput" style="display:none">
         </label>
         <label class="photo-btn">🖼 既存の写真
-          <input type="file" accept="image/*" id="galleryInput" style="display:none">
+          <input type="file" accept="image/*" id="galleryInput" style="display:none" multiple>
         </label>
       </div>
-      <div id="photoPreviewWrap" style="display:none;" class="photo-preview-wrap">
-        <img id="photoPreview" class="photo-preview">
-        <button class="photo-remove" id="photoRemoveBtn">✕</button>
-      </div>
+      <div id="photoPreviewList" class="photo-preview-list"></div>
       <div class="gps-info" id="gpsInfo"></div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
         <button type="button" id="useCurrentLocationBtn" class="btn-small" style="display:none;">📍 現在地を使う</button>
@@ -258,9 +279,12 @@ textarea{resize:vertical; min-height:80px;}
 <!-- 写真フルスクリーンビューア -->
 <div class="photo-viewer" id="photoViewer">
   <button class="photo-viewer-close" id="photoViewerClose">✕</button>
+  <button class="photo-viewer-nav photo-viewer-prev" id="photoViewerPrev">‹</button>
+  <button class="photo-viewer-nav photo-viewer-next" id="photoViewerNext">›</button>
   <div class="photo-viewer-stage" id="photoViewerStage">
     <img class="photo-viewer-img" id="photoViewerImg">
   </div>
+  <div class="photo-viewer-counter" id="photoViewerCounter"></div>
   <div class="photo-viewer-hint">ピンチ／ダブルタップで拡大・縮小</div>
 </div>
 
@@ -296,8 +320,8 @@ const LOCAL_TAG_KEY = "genchoumemo_tags_v1";
 let entries = {};   // id -> entry
 let tagPoolList = []; // 蓄積タグ一覧
 let selectedTags = [];
-let currentPhotoDataUrl = null;
-let currentPhotoGPS = null; // {lat, lng}
+let currentPhotos = []; // 圧縮済みdataURLの配列
+let currentPhotoGPS = null; // {lat, lng} (レコード全体で1つの位置)
 let photoChosen = false;
 let editingId = null;
 let mapInstance = null;
@@ -485,10 +509,16 @@ function renderList(){
   }
   listEl.innerHTML = '';
   list.forEach(e=>{
+    const photos = e.photos || (e.photo ? [e.photo] : []);
     const card = document.createElement('div');
     card.className = 'card entry-card';
     card.innerHTML = `
-      ${e.photo ? `<img class="entry-thumb" src="${e.photo}">` : `<div class="entry-thumb noimg">📍</div>`}
+      ${photos.length ? `
+        <div class="entry-thumb-wrap">
+          <img class="entry-thumb" src="${photos[0]}">
+          ${photos.length > 1 ? `<span class="entry-thumb-badge">+${photos.length - 1}</span>` : ''}
+        </div>
+      ` : `<div class="entry-thumb noimg">📍</div>`}
       <div class="entry-body">
         <div class="entry-date">${formatDT(e.date)}</div>
         <div class="entry-tags">${(e.tags||[]).map(t=>`<span class="tag-chip">${escapeHtml(t)}</span>`).join('')}</div>
@@ -497,11 +527,11 @@ function renderList(){
       </div>
     `;
     card.addEventListener('click', ()=> openEditForm(e.id));
-    if (e.photo){
+    if (photos.length){
       const thumbImg = card.querySelector('.entry-thumb');
       thumbImg.addEventListener('click', (ev)=>{
         ev.stopPropagation();
-        openPhotoViewer(e.photo);
+        openPhotoViewer(photos, 0);
       });
     }
     listEl.appendChild(card);
@@ -524,9 +554,11 @@ function renderMap(){
   mapMarkers = [];
   const withGps = Object.values(entries).filter(e=>e.lat && e.lng);
   withGps.forEach(e=>{
+    const photos = e.photos || (e.photo ? [e.photo] : []);
     const marker = L.marker([e.lat, e.lng]).addTo(mapInstance);
     marker.bindPopup(`
-      ${e.photo ? `<img src="${e.photo}">` : ''}
+      ${photos.length ? `<img src="${photos[0]}">` : ''}
+      ${photos.length > 1 ? `<div style="font-size:11px; color:#8a7a68; margin:-2px 0 4px;">ほか${photos.length-1}枚</div>` : ''}
       <b>${formatDT(e.date)}</b><br>
       ${(e.tags||[]).map(t=>escapeHtml(t)).join('・')}<br>
       ${e.target ? '👤 '+escapeHtml(e.target)+'<br>' : ''}
@@ -543,11 +575,11 @@ function renderMap(){
 /* ---------- フォーム操作 ---------- */
 function resetForm(){
   editingId = null;
-  currentPhotoDataUrl = null;
+  currentPhotos = [];
   currentPhotoGPS = null;
   photoChosen = false;
   selectedTags = [];
-  document.getElementById('photoPreviewWrap').style.display = 'none';
+  renderPhotoPreviewList();
   document.getElementById('locationPickerMapWrap').style.display = 'none';
   updateGpsInfo();
   document.getElementById('dateInput').value = nowLocalInputValue();
@@ -565,16 +597,11 @@ function openEditForm(id){
   const e = entries[id];
   if (!e) return;
   editingId = id;
-  currentPhotoDataUrl = e.photo || null;
+  currentPhotos = (e.photos || (e.photo ? [e.photo] : [])).slice();
   currentPhotoGPS = (e.lat && e.lng) ? {lat:e.lat, lng:e.lng} : null;
-  photoChosen = !!e.photo;
+  photoChosen = currentPhotos.length > 0;
   selectedTags = (e.tags || []).slice();
-  if (e.photo){
-    document.getElementById('photoPreview').src = e.photo;
-    document.getElementById('photoPreviewWrap').style.display = 'block';
-  } else {
-    document.getElementById('photoPreviewWrap').style.display = 'none';
-  }
+  renderPhotoPreviewList();
   document.getElementById('locationPickerMapWrap').style.display = 'none';
   updateGpsInfo();
   const d = new Date(e.date);
@@ -756,22 +783,44 @@ function drawOrientedImage(img, orientation, maxDim){
   return canvas;
 }
 
-async function handlePhotoFile(file){
-  if (!file) return;
-  currentPhotoGPS = null;
-  photoChosen = true;
-  updateGpsInfo();
+function renderPhotoPreviewList(){
+  const wrap = document.getElementById('photoPreviewList');
+  wrap.innerHTML = '';
+  currentPhotos.forEach((dataUrl, idx)=>{
+    const item = document.createElement('div');
+    item.className = 'photo-preview-item';
+    const img = document.createElement('img');
+    img.src = dataUrl;
+    img.addEventListener('click', ()=> openPhotoViewer(currentPhotos, idx));
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'photo-item-remove';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      currentPhotos.splice(idx, 1);
+      photoChosen = currentPhotos.length > 0;
+      renderPhotoPreviewList();
+      updateGpsInfo();
+    });
+    item.appendChild(img);
+    item.appendChild(removeBtn);
+    wrap.appendChild(item);
+  });
+}
 
+async function addSinglePhoto(file, allowAutoFill){
   // GPS座標抽出 (exifr.gpsは内部でDMS→10進変換まで行ってくれるため安定)
-  try {
-    const gps = await exifr.gps(file);
-    if (gps && isFinite(gps.latitude) && isFinite(gps.longitude)){
-      currentPhotoGPS = { lat: gps.latitude, lng: gps.longitude };
+  if (!currentPhotoGPS){
+    try {
+      const gps = await exifr.gps(file);
+      if (gps && isFinite(gps.latitude) && isFinite(gps.longitude)){
+        currentPhotoGPS = { lat: gps.latitude, lng: gps.longitude };
+        updateGpsInfo();
+      }
+    } catch(e){
+      console.warn('GPS抽出失敗', e);
     }
-  } catch(e){
-    console.warn('GPS抽出失敗', e);
   }
-  updateGpsInfo();
 
   // 日時・向きの抽出
   let orientation = 1;
@@ -781,9 +830,11 @@ async function handlePhotoFile(file){
     });
     if (tags){
       if (tags.Orientation) orientation = tags.Orientation;
-      const photoDate = extractPhotoDateTime(tags);
-      if (photoDate){
-        document.getElementById('dateInput').value = toLocalInputValue(photoDate);
+      if (allowAutoFill){
+        const photoDate = extractPhotoDateTime(tags);
+        if (photoDate){
+          document.getElementById('dateInput').value = toLocalInputValue(photoDate);
+        }
       }
     }
   } catch(e){
@@ -791,39 +842,47 @@ async function handlePhotoFile(file){
   }
 
   // 画像の圧縮・向き補正
-  const imgReader = new FileReader();
-  imgReader.onload = function(ev){
-    const img = new Image();
-    img.onload = function(){
-      try{
-        const canvas = drawOrientedImage(img, orientation, 1600);
-        currentPhotoDataUrl = canvas.toDataURL('image/jpeg', 0.75);
-      } catch(e){
-        console.error('画像の圧縮に失敗、元画像を使用します', e);
-        currentPhotoDataUrl = ev.target.result;
-      }
-      document.getElementById('photoPreview').src = currentPhotoDataUrl;
-      document.getElementById('photoPreviewWrap').style.display = 'block';
+  const dataUrl = await new Promise((resolve)=>{
+    const imgReader = new FileReader();
+    imgReader.onload = function(ev){
+      const img = new Image();
+      img.onload = function(){
+        try{
+          const canvas = drawOrientedImage(img, orientation, 1600);
+          resolve(canvas.toDataURL('image/jpeg', 0.75));
+        } catch(e){
+          console.error('画像の圧縮に失敗、元画像を使用します', e);
+          resolve(ev.target.result);
+        }
+      };
+      img.src = ev.target.result;
     };
-    img.src = ev.target.result;
-  };
-  imgReader.readAsDataURL(file);
+    imgReader.readAsDataURL(file);
+  });
+
+  currentPhotos.push(dataUrl);
+  renderPhotoPreviewList();
 }
 
-document.getElementById('cameraInput').addEventListener('change', e=> handlePhotoFile(e.target.files[0]));
-document.getElementById('galleryInput').addEventListener('change', e=> handlePhotoFile(e.target.files[0]));
-document.getElementById('photoPreview').style.cursor = 'zoom-in';
-document.getElementById('photoPreview').addEventListener('click', ()=>{
-  if (currentPhotoDataUrl) openPhotoViewer(currentPhotoDataUrl);
-});
-document.getElementById('photoRemoveBtn').addEventListener('click', ()=>{
-  currentPhotoDataUrl = null;
-  currentPhotoGPS = null;
-  photoChosen = false;
-  document.getElementById('photoPreviewWrap').style.display = 'none';
-  document.getElementById('cameraInput').value = '';
-  document.getElementById('galleryInput').value = '';
+async function addPhotoFiles(fileList){
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const allowAutoFill = currentPhotos.length === 0; // 最初の写真のときだけ日時を自動セット
+  photoChosen = true;
   updateGpsInfo();
+  for (const file of files){
+    await addSinglePhoto(file, allowAutoFill);
+  }
+  updateGpsInfo();
+}
+
+document.getElementById('cameraInput').addEventListener('change', e=>{
+  addPhotoFiles(e.target.files);
+  e.target.value = '';
+});
+document.getElementById('galleryInput').addEventListener('change', e=>{
+  addPhotoFiles(e.target.files);
+  e.target.value = '';
 });
 
 /* ---------- タグ追加 ---------- */
@@ -847,7 +906,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   const entry = {
     id: editingId || uid(),
     date: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
-    photo: currentPhotoDataUrl || null,
+    photos: currentPhotos.slice(),
     lat: currentPhotoGPS ? currentPhotoGPS.lat : null,
     lng: currentPhotoGPS ? currentPhotoGPS.lng : null,
     tags: selectedTags.slice(),
@@ -903,11 +962,17 @@ document.getElementById('entryList').addEventListener('touchstart', e=>{
   const stage = document.getElementById('photoViewerStage');
   const img = document.getElementById('photoViewerImg');
   const closeBtn = document.getElementById('photoViewerClose');
+  const prevBtn = document.getElementById('photoViewerPrev');
+  const nextBtn = document.getElementById('photoViewerNext');
+  const counterEl = document.getElementById('photoViewerCounter');
 
+  let photoList = [];
+  let currentIndex = 0;
   let scale = 1, tx = 0, ty = 0;
   let dragging = false, dragStartX = 0, dragStartY = 0, startTx = 0, startTy = 0;
   let pinchStartDist = 0, pinchStartScale = 1;
   let lastTapTime = 0;
+  let swipeStartX = null, swipeStartY = null;
   const pointers = {};
 
   function applyTransform(){
@@ -917,16 +982,37 @@ document.getElementById('entryList').addEventListener('touchstart', e=>{
     scale = 1; tx = 0; ty = 0;
     applyTransform();
   }
-  window.openPhotoViewer = function(src){
-    img.src = src;
+  function updateNav(){
+    const multi = photoList.length > 1;
+    prevBtn.style.display = multi ? 'flex' : 'none';
+    nextBtn.style.display = multi ? 'flex' : 'none';
+    counterEl.textContent = multi ? `${currentIndex + 1} / ${photoList.length}` : '';
+  }
+  function showIndex(idx){
+    if (!photoList.length) return;
+    currentIndex = (idx + photoList.length) % photoList.length;
+    img.src = photoList[currentIndex];
     resetTransform();
+    updateNav();
+  }
+  window.openPhotoViewer = function(src, startIndex){
+    if (Array.isArray(src)){
+      photoList = src;
+      showIndex(startIndex || 0);
+    } else {
+      photoList = [src];
+      showIndex(0);
+    }
     viewer.classList.add('active');
   };
   function closeViewer(){
     viewer.classList.remove('active');
     img.src = '';
+    photoList = [];
   }
   closeBtn.addEventListener('click', closeViewer);
+  prevBtn.addEventListener('click', ()=> showIndex(currentIndex - 1));
+  nextBtn.addEventListener('click', ()=> showIndex(currentIndex + 1));
 
   stage.addEventListener('pointerdown', e=>{
     stage.setPointerCapture(e.pointerId);
@@ -940,14 +1026,17 @@ document.getElementById('entryList').addEventListener('touchstart', e=>{
         else { scale = 2.5; applyTransform(); }
         lastTapTime = 0;
         dragging = false;
+        swipeStartX = null;
       } else {
         lastTapTime = now;
         dragging = true;
         dragStartX = e.clientX; dragStartY = e.clientY;
         startTx = tx; startTy = ty;
+        if (scale === 1){ swipeStartX = e.clientX; swipeStartY = e.clientY; }
       }
     } else if (ids.length === 2){
       dragging = false;
+      swipeStartX = null;
       const [p1, p2] = ids.map(id=>pointers[id]);
       pinchStartDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
       pinchStartScale = scale;
@@ -974,6 +1063,15 @@ document.getElementById('entryList').addEventListener('touchstart', e=>{
   });
 
   function endPointer(e){
+    // 等倍表示中に横スワイプしていたら前後の写真に切り替え
+    if (scale === 1 && swipeStartX !== null && e.clientX !== undefined){
+      const dx = e.clientX - swipeStartX;
+      const dy = e.clientY - swipeStartY;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && photoList.length > 1){
+        showIndex(currentIndex + (dx < 0 ? 1 : -1));
+      }
+    }
+    swipeStartX = null;
     delete pointers[e.pointerId];
     if (Object.keys(pointers).length < 2) pinchStartDist = 0;
     if (Object.keys(pointers).length === 0) dragging = false;
