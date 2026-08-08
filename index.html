@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>現調メモ</title>
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23b5764a'/%3E%3Ctext x='50' y='62' font-size='42' text-anchor='middle' fill='white' font-family='sans-serif'%3E%F0%9F%93%8D%3C/text%3E%3C/svg%3E">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23b5764a'/%3E%3Ctext x='50' y='62' font-size='42' text-anchor='middle' fill='white' font-family='sans-serif'%3E%F0%9F%93%8D%3C/text%3E%3C/svg%3E">
+<title>現場メモ</title>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23e8a33d'/%3E%3Ctext x='50' y='64' font-size='46' text-anchor='middle' fill='white' font-family='sans-serif'%3E%F0%9F%91%B7%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23e8a33d'/%3E%3Ctext x='50' y='64' font-size='46' text-anchor='middle' fill='white' font-family='sans-serif'%3E%F0%9F%91%B7%3C/text%3E%3C/svg%3E">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="現調メモ">
-<meta name="theme-color" content="#b5764a">
+<meta name="apple-mobile-web-app-title" content="現場メモ">
+<meta name="theme-color" content="#e8a33d">
 
 <!-- Firebase -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -151,7 +151,7 @@ textarea{resize:vertical; min-height:80px;}
 <body>
 
 <header>
-  <h1>📍 現調メモ</h1>
+  <h1>👷 現場メモ</h1>
   <span class="sync-status" id="syncStatus">同期中…</span>
 </header>
 
@@ -253,6 +253,7 @@ let tagPoolList = []; // 蓄積タグ一覧
 let selectedTags = [];
 let currentPhotoDataUrl = null;
 let currentPhotoGPS = null; // {lat, lng}
+let photoChosen = false;
 let editingId = null;
 let mapInstance = null;
 let mapMarkers = [];
@@ -290,12 +291,13 @@ function initData(){
     }, err => {
       document.getElementById('syncStatus').textContent = '同期エラー';
       console.error(err);
+      alert('データの読み込みに失敗しました：' + err.message + '\n\nFirebase Realtime Databaseの「ルール」タブで読み書きが許可されているか確認してください（テストモードなら通常は自動許可されています）。');
     });
     db.ref('tags').on('value', snap => {
       tagPoolList = snap.val() || [];
       renderTagPool();
       renderFilterRow();
-    });
+    }, err => console.error('タグ読み込みエラー', err));
   } else {
     entries = JSON.parse(localStorage.getItem(LOCAL_KEY) || "{}");
     tagPoolList = JSON.parse(localStorage.getItem(LOCAL_TAG_KEY) || "[]");
@@ -313,7 +315,10 @@ function addTagToPool(tag){
   if (tagPoolList.includes(tag)) return;
   tagPoolList.push(tag);
   if (useFirebase){
-    db.ref('tags').set(tagPoolList);
+    db.ref('tags').set(tagPoolList).catch(err=>{
+      console.error('タグ保存エラー', err);
+      alert('タグの保存に失敗しました：' + err.message + '\n\nFirebase Realtime Databaseの「ルール」で読み書きが許可されているか確認してください。');
+    });
   } else {
     saveTagsLocal();
     renderTagPool();
@@ -324,7 +329,16 @@ function addTagToPool(tag){
 function persistEntry(entry){
   entries[entry.id] = entry;
   if (useFirebase){
-    db.ref('entries/'+entry.id).set(entry);
+    document.getElementById('syncStatus').textContent = '保存中…';
+    db.ref('entries/'+entry.id).set(entry)
+      .then(()=>{
+        document.getElementById('syncStatus').textContent = '同期済み';
+      })
+      .catch(err=>{
+        console.error('登録の保存に失敗', err);
+        document.getElementById('syncStatus').textContent = '保存エラー';
+        alert('登録の保存に失敗しました：' + err.message + '\n\nFirebase Realtime Databaseの「ルール」で読み書きが許可されているか、写真サイズが大きすぎないか確認してください。');
+      });
   } else {
     saveEntriesLocal();
     renderList();
@@ -334,7 +348,10 @@ function persistEntry(entry){
 function deleteEntry(id){
   delete entries[id];
   if (useFirebase){
-    db.ref('entries/'+id).remove();
+    db.ref('entries/'+id).remove().catch(err=>{
+      console.error('削除に失敗', err);
+      alert('削除に失敗しました：' + err.message);
+    });
   } else {
     saveEntriesLocal();
     renderList();
@@ -476,6 +493,7 @@ function resetForm(){
   editingId = null;
   currentPhotoDataUrl = null;
   currentPhotoGPS = null;
+  photoChosen = false;
   selectedTags = [];
   document.getElementById('photoPreviewWrap').style.display = 'none';
   document.getElementById('gpsInfo').textContent = '';
@@ -497,6 +515,7 @@ function openEditForm(id){
   editingId = id;
   currentPhotoDataUrl = e.photo || null;
   currentPhotoGPS = (e.lat && e.lng) ? {lat:e.lat, lng:e.lng} : null;
+  photoChosen = !!e.photo;
   selectedTags = (e.tags || []).slice();
   if (e.photo){
     document.getElementById('photoPreview').src = e.photo;
@@ -537,7 +556,7 @@ function updateGpsInfo(){
   if (currentPhotoGPS){
     gi.textContent = `📍 GPS取得済み (${currentPhotoGPS.lat.toFixed(5)}, ${currentPhotoGPS.lng.toFixed(5)})`;
     gi.className = 'gps-info ok';
-  } else if (currentPhotoDataUrl){
+  } else if (photoChosen){
     gi.textContent = 'この写真にはGPS情報がありません';
     gi.className = 'gps-info ng';
   } else {
@@ -554,22 +573,76 @@ function convertDMSToDD(dms, ref){
   return dd;
 }
 
+function pad2(n){ return String(Math.floor(n)).padStart(2,'0'); }
+
+// datetime-local入力欄用のローカル日時文字列(YYYY-MM-DDTHH:MM)を作る
+function toLocalInputValue(dateObj){
+  const d = new Date(dateObj);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0,16);
+}
+
+// GPSタイムスタンプ(UTC)優先、なければ撮影日時(DateTimeOriginal)、それも無ければnull
+function extractPhotoDateTime(exifObj){
+  const gpsDate = EXIF.getTag(exifObj, "GPSDateStamp");
+  const gpsTime = EXIF.getTag(exifObj, "GPSTimeStamp");
+  if (gpsDate && gpsTime && gpsTime.length === 3){
+    const parts = gpsDate.split(':').map(n=>parseInt(n,10));
+    if (parts.length === 3){
+      const utcMs = Date.UTC(parts[0], parts[1]-1, parts[2],
+        Math.floor(gpsTime[0]), Math.floor(gpsTime[1]), Math.floor(gpsTime[2]));
+      if (!isNaN(utcMs)) return new Date(utcMs);
+    }
+  }
+  const original = EXIF.getTag(exifObj, "DateTimeOriginal") || EXIF.getTag(exifObj, "DateTime");
+  if (original){
+    // "YYYY:MM:DD HH:MM:SS" 形式(カメラのローカル時刻として扱う)
+    const m = String(original).match(/^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+    if (m){
+      const d = new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
+      if (!isNaN(d)) return d;
+    }
+  }
+  return null;
+}
+
+// EXIF Orientationを考慮しつつ、長辺maxDimにリサイズ・JPEG圧縮してcanvasを返す
+function drawOrientedImage(img, orientation, maxDim){
+  let w = img.naturalWidth, h = img.naturalHeight;
+  if (w > maxDim || h > maxDim){
+    if (w > h){ h = Math.round(h * maxDim / w); w = maxDim; }
+    else { w = Math.round(w * maxDim / h); h = maxDim; }
+  }
+  const canvas = document.createElement('canvas');
+  const swap = orientation >= 5 && orientation <= 8;
+  canvas.width = swap ? h : w;
+  canvas.height = swap ? w : h;
+  const ctx = canvas.getContext('2d');
+  switch(orientation){
+    case 2: ctx.transform(-1,0,0,1,canvas.width,0); break;
+    case 3: ctx.transform(-1,0,0,-1,canvas.width,canvas.height); break;
+    case 4: ctx.transform(1,0,0,-1,0,canvas.height); break;
+    case 5: ctx.transform(0,1,1,0,0,0); break;
+    case 6: ctx.transform(0,1,-1,0,canvas.height,0); break;
+    case 7: ctx.transform(0,-1,-1,0,canvas.height,canvas.width); break;
+    case 8: ctx.transform(0,-1,1,0,0,canvas.width); break;
+    default: break;
+  }
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas;
+}
+
 function handlePhotoFile(file){
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(ev){
-    currentPhotoDataUrl = ev.target.result;
-    document.getElementById('photoPreview').src = currentPhotoDataUrl;
-    document.getElementById('photoPreviewWrap').style.display = 'block';
-  };
-  reader.readAsDataURL(file);
-
   currentPhotoGPS = null;
+  photoChosen = true;
+
   EXIF.getData(file, function(){
-    const lat = EXIF.getTag(this, "GPSLatitude");
-    const latRef = EXIF.getTag(this, "GPSLatitudeRef");
-    const lng = EXIF.getTag(this, "GPSLongitude");
-    const lngRef = EXIF.getTag(this, "GPSLongitudeRef");
+    const exifObj = this;
+    const lat = EXIF.getTag(exifObj, "GPSLatitude");
+    const latRef = EXIF.getTag(exifObj, "GPSLatitudeRef");
+    const lng = EXIF.getTag(exifObj, "GPSLongitude");
+    const lngRef = EXIF.getTag(exifObj, "GPSLongitudeRef");
     if (lat && lng){
       const ddLat = convertDMSToDD(lat, latRef);
       const ddLng = convertDMSToDD(lng, lngRef);
@@ -578,6 +651,31 @@ function handlePhotoFile(file){
       }
     }
     updateGpsInfo();
+
+    // 登録日時はジオタグ(GPSタイムスタンプ)を優先して自動セット
+    const photoDate = extractPhotoDateTime(exifObj);
+    if (photoDate){
+      document.getElementById('dateInput').value = toLocalInputValue(photoDate);
+    }
+
+    const orientation = EXIF.getTag(exifObj, "Orientation") || 1;
+    const imgReader = new FileReader();
+    imgReader.onload = function(ev){
+      const img = new Image();
+      img.onload = function(){
+        try{
+          const canvas = drawOrientedImage(img, orientation, 1600);
+          currentPhotoDataUrl = canvas.toDataURL('image/jpeg', 0.75);
+        } catch(e){
+          console.error('画像の圧縮に失敗、元画像を使用します', e);
+          currentPhotoDataUrl = ev.target.result;
+        }
+        document.getElementById('photoPreview').src = currentPhotoDataUrl;
+        document.getElementById('photoPreviewWrap').style.display = 'block';
+      };
+      img.src = ev.target.result;
+    };
+    imgReader.readAsDataURL(file);
   });
 }
 
@@ -586,6 +684,7 @@ document.getElementById('galleryInput').addEventListener('change', e=> handlePho
 document.getElementById('photoRemoveBtn').addEventListener('click', ()=>{
   currentPhotoDataUrl = null;
   currentPhotoGPS = null;
+  photoChosen = false;
   document.getElementById('photoPreviewWrap').style.display = 'none';
   document.getElementById('cameraInput').value = '';
   document.getElementById('galleryInput').value = '';
