@@ -21,7 +21,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <!-- EXIF読み取り -->
-<script src="https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
 
 <style>
 :root{
@@ -192,6 +192,7 @@ textarea{resize:vertical; min-height:80px;}
         <button class="photo-remove" id="photoRemoveBtn">✕</button>
       </div>
       <div class="gps-info" id="gpsInfo"></div>
+      <button type="button" id="useCurrentLocationBtn" class="btn-small" style="display:none; margin-top:8px;">📍 現在地を使う</button>
 
       <label>登録日時</label>
       <input type="datetime-local" id="dateInput">
@@ -496,8 +497,7 @@ function resetForm(){
   photoChosen = false;
   selectedTags = [];
   document.getElementById('photoPreviewWrap').style.display = 'none';
-  document.getElementById('gpsInfo').textContent = '';
-  document.getElementById('gpsInfo').className = 'gps-info';
+  updateGpsInfo();
   document.getElementById('dateInput').value = nowLocalInputValue();
   document.getElementById('targetInput').value = '';
   document.getElementById('memoInput').value = '';
@@ -553,25 +553,42 @@ document.getElementById('cancelBtn').addEventListener('click', backToList);
 /* ---------- 写真処理 & GPS抽出 ---------- */
 function updateGpsInfo(){
   const gi = document.getElementById('gpsInfo');
+  const btn = document.getElementById('useCurrentLocationBtn');
   if (currentPhotoGPS){
     gi.textContent = `📍 GPS取得済み (${currentPhotoGPS.lat.toFixed(5)}, ${currentPhotoGPS.lng.toFixed(5)})`;
     gi.className = 'gps-info ok';
+    btn.style.display = 'none';
   } else if (photoChosen){
-    gi.textContent = 'この写真にはGPS情報がありません';
+    gi.textContent = 'この写真にはGPS情報がありません（ブラウザのカメラ機能では位置情報が記録されないことがあります）';
     gi.className = 'gps-info ng';
+    btn.style.display = 'inline-block';
   } else {
     gi.textContent = '';
     gi.className = 'gps-info';
+    btn.style.display = 'none';
   }
 }
 
-function convertDMSToDD(dms, ref){
-  if (!dms) return null;
-  const deg = dms[0], min = dms[1], sec = dms[2];
-  let dd = deg + min/60 + sec/3600;
-  if (ref === 'S' || ref === 'W') dd = dd * -1;
-  return dd;
-}
+document.getElementById('useCurrentLocationBtn').addEventListener('click', ()=>{
+  const btn = document.getElementById('useCurrentLocationBtn');
+  if (!navigator.geolocation){
+    alert('この端末・ブラウザでは現在地の取得に対応していません。');
+    return;
+  }
+  btn.textContent = '取得中…';
+  navigator.geolocation.getCurrentPosition(
+    pos=>{
+      currentPhotoGPS = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      btn.textContent = '📍 現在地を使う';
+      updateGpsInfo();
+    },
+    err=>{
+      btn.textContent = '📍 現在地を使う';
+      alert('現在地の取得に失敗しました：' + err.message + '\n\n位置情報の利用が許可されているか確認してください。');
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+});
 
 function pad2(n){ return String(Math.floor(n)).padStart(2,'0'); }
 
@@ -582,22 +599,27 @@ function toLocalInputValue(dateObj){
   return d.toISOString().slice(0,16);
 }
 
-// GPSタイムスタンプ(UTC)優先、なければ撮影日時(DateTimeOriginal)、それも無ければnull
-function extractPhotoDateTime(exifObj){
-  const gpsDate = EXIF.getTag(exifObj, "GPSDateStamp");
-  const gpsTime = EXIF.getTag(exifObj, "GPSTimeStamp");
+// GPSタイムスタンプ(UTC)優先、なければ撮影日時(DateTimeOriginal/CreateDate)、それも無ければnull
+function extractPhotoDateTime(tags){
+  const gpsDate = tags.GPSDateStamp;
+  const gpsTime = tags.GPSTimeStamp;
   if (gpsDate && gpsTime && gpsTime.length === 3){
-    const parts = gpsDate.split(':').map(n=>parseInt(n,10));
-    if (parts.length === 3){
-      const utcMs = Date.UTC(parts[0], parts[1]-1, parts[2],
-        Math.floor(gpsTime[0]), Math.floor(gpsTime[1]), Math.floor(gpsTime[2]));
+    let y, mo, da;
+    if (typeof gpsDate === 'string'){
+      const parts = gpsDate.split(':').map(n=>parseInt(n,10));
+      if (parts.length === 3){ y = parts[0]; mo = parts[1]-1; da = parts[2]; }
+    } else if (gpsDate instanceof Date){
+      y = gpsDate.getUTCFullYear(); mo = gpsDate.getUTCMonth(); da = gpsDate.getUTCDate();
+    }
+    if (y != null){
+      const utcMs = Date.UTC(y, mo, da, Math.floor(gpsTime[0]), Math.floor(gpsTime[1]), Math.floor(gpsTime[2]));
       if (!isNaN(utcMs)) return new Date(utcMs);
     }
   }
-  const original = EXIF.getTag(exifObj, "DateTimeOriginal") || EXIF.getTag(exifObj, "DateTime");
-  if (original){
-    // "YYYY:MM:DD HH:MM:SS" 形式(カメラのローカル時刻として扱う)
-    const m = String(original).match(/^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+  const original = tags.DateTimeOriginal || tags.CreateDate;
+  if (original instanceof Date && !isNaN(original)) return original;
+  if (typeof original === 'string'){
+    const m = original.match(/^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
     if (m){
       const d = new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
       if (!isNaN(d)) return d;
@@ -632,51 +654,58 @@ function drawOrientedImage(img, orientation, maxDim){
   return canvas;
 }
 
-function handlePhotoFile(file){
+async function handlePhotoFile(file){
   if (!file) return;
   currentPhotoGPS = null;
   photoChosen = true;
+  updateGpsInfo();
 
-  EXIF.getData(file, function(){
-    const exifObj = this;
-    const lat = EXIF.getTag(exifObj, "GPSLatitude");
-    const latRef = EXIF.getTag(exifObj, "GPSLatitudeRef");
-    const lng = EXIF.getTag(exifObj, "GPSLongitude");
-    const lngRef = EXIF.getTag(exifObj, "GPSLongitudeRef");
-    if (lat && lng){
-      const ddLat = convertDMSToDD(lat, latRef);
-      const ddLng = convertDMSToDD(lng, lngRef);
-      if (ddLat !== null && ddLng !== null){
-        currentPhotoGPS = { lat: ddLat, lng: ddLng };
+  // GPS座標抽出 (exifr.gpsは内部でDMS→10進変換まで行ってくれるため安定)
+  try {
+    const gps = await exifr.gps(file);
+    if (gps && isFinite(gps.latitude) && isFinite(gps.longitude)){
+      currentPhotoGPS = { lat: gps.latitude, lng: gps.longitude };
+    }
+  } catch(e){
+    console.warn('GPS抽出失敗', e);
+  }
+  updateGpsInfo();
+
+  // 日時・向きの抽出
+  let orientation = 1;
+  try {
+    const tags = await exifr.parse(file, {
+      pick: ['DateTimeOriginal','CreateDate','GPSDateStamp','GPSTimeStamp','Orientation']
+    });
+    if (tags){
+      if (tags.Orientation) orientation = tags.Orientation;
+      const photoDate = extractPhotoDateTime(tags);
+      if (photoDate){
+        document.getElementById('dateInput').value = toLocalInputValue(photoDate);
       }
     }
-    updateGpsInfo();
+  } catch(e){
+    console.warn('EXIF日時抽出失敗', e);
+  }
 
-    // 登録日時はジオタグ(GPSタイムスタンプ)を優先して自動セット
-    const photoDate = extractPhotoDateTime(exifObj);
-    if (photoDate){
-      document.getElementById('dateInput').value = toLocalInputValue(photoDate);
-    }
-
-    const orientation = EXIF.getTag(exifObj, "Orientation") || 1;
-    const imgReader = new FileReader();
-    imgReader.onload = function(ev){
-      const img = new Image();
-      img.onload = function(){
-        try{
-          const canvas = drawOrientedImage(img, orientation, 1600);
-          currentPhotoDataUrl = canvas.toDataURL('image/jpeg', 0.75);
-        } catch(e){
-          console.error('画像の圧縮に失敗、元画像を使用します', e);
-          currentPhotoDataUrl = ev.target.result;
-        }
-        document.getElementById('photoPreview').src = currentPhotoDataUrl;
-        document.getElementById('photoPreviewWrap').style.display = 'block';
-      };
-      img.src = ev.target.result;
+  // 画像の圧縮・向き補正
+  const imgReader = new FileReader();
+  imgReader.onload = function(ev){
+    const img = new Image();
+    img.onload = function(){
+      try{
+        const canvas = drawOrientedImage(img, orientation, 1600);
+        currentPhotoDataUrl = canvas.toDataURL('image/jpeg', 0.75);
+      } catch(e){
+        console.error('画像の圧縮に失敗、元画像を使用します', e);
+        currentPhotoDataUrl = ev.target.result;
+      }
+      document.getElementById('photoPreview').src = currentPhotoDataUrl;
+      document.getElementById('photoPreviewWrap').style.display = 'block';
     };
-    imgReader.readAsDataURL(file);
-  });
+    img.src = ev.target.result;
+  };
+  imgReader.readAsDataURL(file);
 }
 
 document.getElementById('cameraInput').addEventListener('change', e=> handlePhotoFile(e.target.files[0]));
