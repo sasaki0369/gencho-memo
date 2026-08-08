@@ -94,8 +94,10 @@ input[type=text], input[type=datetime-local], textarea{
 textarea{resize:vertical; min-height:80px;}
 .photo-buttons{display:flex; gap:10px;}
 .photo-btn{
-  flex:1; padding:14px; border:2px dashed var(--accent-light); border-radius:12px;
-  background:#fdf9f2; text-align:center; font-size:13px; color:var(--accent-dark); font-weight:600;
+  flex:1 1 0; min-width:0; box-sizing:border-box; margin:0;
+  padding:14px 6px; border:2px dashed var(--accent-light); border-radius:12px;
+  background:#fdf9f2; display:flex; align-items:center; justify-content:center;
+  min-height:52px; text-align:center; font-size:13px; color:var(--accent-dark); font-weight:600;
 }
 .photo-preview-wrap{position:relative; margin-top:10px;}
 .photo-preview{width:100%; max-height:280px; object-fit:cover; border-radius:12px;}
@@ -218,7 +220,14 @@ textarea{resize:vertical; min-height:80px;}
         <button class="photo-remove" id="photoRemoveBtn">✕</button>
       </div>
       <div class="gps-info" id="gpsInfo"></div>
-      <button type="button" id="useCurrentLocationBtn" class="btn-small" style="display:none; margin-top:8px;">📍 現在地を使う</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+        <button type="button" id="useCurrentLocationBtn" class="btn-small" style="display:none;">📍 現在地を使う</button>
+        <button type="button" id="toggleMapPickerBtn" class="btn-small" style="background:#fff; color:var(--accent-dark); border:1px solid var(--accent-light);">🗺️ 地図で位置を選ぶ</button>
+      </div>
+      <div id="locationPickerMapWrap" style="display:none; margin-top:10px;">
+        <div id="locationPickerMap" style="height:220px; border-radius:12px; overflow:hidden;"></div>
+        <div style="font-size:12px; color:var(--text-sub); margin-top:6px;">地図をタップ、またはピンをドラッグして位置を調整できます</div>
+      </div>
 
       <label>登録日時</label>
       <input type="datetime-local" id="dateInput">
@@ -539,6 +548,7 @@ function resetForm(){
   photoChosen = false;
   selectedTags = [];
   document.getElementById('photoPreviewWrap').style.display = 'none';
+  document.getElementById('locationPickerMapWrap').style.display = 'none';
   updateGpsInfo();
   document.getElementById('dateInput').value = nowLocalInputValue();
   document.getElementById('targetInput').value = '';
@@ -565,6 +575,7 @@ function openEditForm(id){
   } else {
     document.getElementById('photoPreviewWrap').style.display = 'none';
   }
+  document.getElementById('locationPickerMapWrap').style.display = 'none';
   updateGpsInfo();
   const d = new Date(e.date);
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -609,6 +620,7 @@ function updateGpsInfo(){
     gi.className = 'gps-info';
     btn.style.display = 'none';
   }
+  syncLocationPickerMarker();
 }
 
 document.getElementById('useCurrentLocationBtn').addEventListener('click', ()=>{
@@ -630,6 +642,54 @@ document.getElementById('useCurrentLocationBtn').addEventListener('click', ()=>{
     },
     { enableHighAccuracy: true, timeout: 10000 }
   );
+});
+
+/* ---------- 地図で位置を選択 ---------- */
+let locationPickerMap = null;
+let locationPickerMarker = null;
+
+function syncLocationPickerMarker(){
+  if (!locationPickerMap || !locationPickerMarker) return;
+  if (currentPhotoGPS){
+    const ll = [currentPhotoGPS.lat, currentPhotoGPS.lng];
+    locationPickerMarker.setLatLng(ll);
+    locationPickerMap.setView(ll, Math.max(locationPickerMap.getZoom(), 15));
+  }
+}
+
+function ensureLocationPickerMap(){
+  if (locationPickerMap) return;
+  const center = currentPhotoGPS ? [currentPhotoGPS.lat, currentPhotoGPS.lng] : [35.5, 139.4];
+  locationPickerMap = L.map('locationPickerMap').setView(center, currentPhotoGPS ? 16 : 11);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(locationPickerMap);
+  locationPickerMarker = L.marker(center, { draggable: true }).addTo(locationPickerMap);
+  locationPickerMarker.on('dragend', ()=>{
+    const pos = locationPickerMarker.getLatLng();
+    currentPhotoGPS = { lat: pos.lat, lng: pos.lng };
+    updateGpsInfo();
+  });
+  locationPickerMap.on('click', (e)=>{
+    locationPickerMarker.setLatLng(e.latlng);
+    currentPhotoGPS = { lat: e.latlng.lat, lng: e.latlng.lng };
+    updateGpsInfo();
+  });
+}
+
+document.getElementById('toggleMapPickerBtn').addEventListener('click', ()=>{
+  const wrap = document.getElementById('locationPickerMapWrap');
+  const showing = wrap.style.display !== 'none';
+  if (showing){
+    wrap.style.display = 'none';
+  } else {
+    wrap.style.display = 'block';
+    ensureLocationPickerMap();
+    setTimeout(()=>{
+      locationPickerMap.invalidateSize();
+      syncLocationPickerMarker();
+    }, 100);
+  }
 });
 
 function pad2(n){ return String(Math.floor(n)).padStart(2,'0'); }
