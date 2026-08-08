@@ -4,12 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>現場メモ</title>
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23e8a33d'/%3E%3Ctext x='50' y='64' font-size='46' text-anchor='middle' fill='white' font-family='sans-serif'%3E%F0%9F%91%B7%3C/text%3E%3C/svg%3E">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23e8a33d'/%3E%3Ctext x='50' y='64' font-size='46' text-anchor='middle' fill='white' font-family='sans-serif'%3E%F0%9F%91%B7%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="現場メモ">
 <meta name="theme-color" content="#e8a33d">
+<link rel="manifest" href="manifest.json">
 
 <!-- Firebase -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -932,6 +934,14 @@ document.getElementById('entryList').addEventListener('touchstart', e=>{
 /* ---------- 初期化 ---------- */
 document.getElementById('dateInput').value = nowLocalInputValue();
 initData();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => {
+      console.error('Service Worker登録失敗', err);
+    });
+  });
+}
 </script>
 </body>
 </html>
