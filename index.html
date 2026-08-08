@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>現調メモ</title>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23b5764a'/%3E%3Ctext x='50' y='62' font-size='42' text-anchor='middle' fill='white' font-family='sans-serif'%3E%F0%9F%93%8D%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23b5764a'/%3E%3Ctext x='50' y='62' font-size='42' text-anchor='middle' fill='white' font-family='sans-serif'%3E%F0%9F%93%8D%3C/text%3E%3C/svg%3E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="現調メモ">
+<meta name="theme-color" content="#b5764a">
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+
+<!-- Leaflet (地図) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- EXIF読み取り -->
+<script src="https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.js"></script>
+
+<style>
+:root{
+  --bg:#f6f1e7;
+  --card:#fffdf8;
+  --accent:#b5764a;
+  --accent-dark:#8f5a35;
+  --accent-light:#e8cdb2;
+  --text:#4a3b2c;
+  --text-sub:#8a7a68;
+  --border:#e6dcc9;
+  --danger:#c0605a;
+  --shadow:0 2px 8px rgba(90,60,30,0.08);
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+body{
+  margin:0; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
+  background:var(--bg); color:var(--text); padding-bottom:90px;
+}
+header{
+  background:var(--accent); color:#fff; padding:16px 20px;
+  display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:50; box-shadow:var(--shadow);
+}
+header h1{font-size:19px; margin:0; letter-spacing:.5px; display:flex; align-items:center; gap:8px;}
+header .sync-status{font-size:11px; opacity:.85;}
+.tabs{
+  display:flex; background:var(--card); border-bottom:1px solid var(--border);
+  position:sticky; top:56px; z-index:40;
+}
+.tab{
+  flex:1; text-align:center; padding:12px 0; font-size:14px; color:var(--text-sub);
+  border-bottom:3px solid transparent; cursor:pointer; font-weight:600;
+}
+.tab.active{color:var(--accent-dark); border-bottom-color:var(--accent);}
+main{padding:14px; max-width:640px; margin:0 auto;}
+.view{display:none;}
+.view.active{display:block;}
+
+/* --- カード --- */
+.card{
+  background:var(--card); border:1px solid var(--border); border-radius:14px;
+  padding:14px; margin-bottom:12px; box-shadow:var(--shadow);
+}
+.entry-card{display:flex; gap:12px; cursor:pointer;}
+.entry-thumb{
+  width:78px; height:78px; border-radius:10px; object-fit:cover; flex-shrink:0;
+  background:var(--accent-light);
+}
+.entry-thumb.noimg{display:flex; align-items:center; justify-content:center; font-size:26px;}
+.entry-body{flex:1; min-width:0;}
+.entry-date{font-size:12px; color:var(--text-sub);}
+.entry-tags{display:flex; flex-wrap:wrap; gap:5px; margin:5px 0;}
+.tag-chip{
+  background:var(--accent-light); color:var(--accent-dark); font-size:11.5px;
+  padding:2px 9px; border-radius:20px; font-weight:600; white-space:nowrap;
+}
+.entry-memo{font-size:13px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.entry-target{font-size:12px; color:var(--text-sub); margin-top:2px;}
+
+/* --- フォーム --- */
+label{display:block; font-size:13px; font-weight:700; color:var(--accent-dark); margin:16px 0 6px;}
+label:first-child{margin-top:0;}
+input[type=text], input[type=datetime-local], textarea{
+  width:100%; padding:11px 12px; border:1px solid var(--border); border-radius:10px;
+  font-size:15px; background:#fff; color:var(--text); font-family:inherit;
+}
+textarea{resize:vertical; min-height:80px;}
+.photo-buttons{display:flex; gap:10px;}
+.photo-btn{
+  flex:1; padding:14px; border:2px dashed var(--accent-light); border-radius:12px;
+  background:#fdf9f2; text-align:center; font-size:13px; color:var(--accent-dark); font-weight:600;
+}
+.photo-preview-wrap{position:relative; margin-top:10px;}
+.photo-preview{width:100%; max-height:280px; object-fit:cover; border-radius:12px;}
+.photo-remove{
+  position:absolute; top:8px; right:8px; background:rgba(0,0,0,.55); color:#fff;
+  border:none; border-radius:50%; width:28px; height:28px; font-size:15px;
+}
+.gps-info{font-size:12px; color:var(--text-sub); margin-top:6px;}
+.gps-info.ok{color:#4a7a4a;}
+.gps-info.ng{color:var(--danger);}
+
+.tag-input-row{display:flex; gap:8px;}
+.tag-input-row input{flex:1;}
+.btn-small{
+  background:var(--accent); color:#fff; border:none; border-radius:10px;
+  padding:0 16px; font-size:14px; font-weight:700;
+}
+.tag-pool{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;}
+.tag-pool .tag-chip{
+  cursor:pointer; border:1px solid transparent; padding:4px 12px;
+}
+.tag-pool .tag-chip.selected{background:var(--accent); color:#fff;}
+
+.save-bar{
+  position:fixed; bottom:0; left:0; right:0; background:var(--card);
+  border-top:1px solid var(--border); padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+  display:flex; gap:10px; z-index:60;
+}
+.btn-main{
+  flex:1; background:var(--accent); color:#fff; border:none; border-radius:12px;
+  padding:14px; font-size:15px; font-weight:700;
+}
+.btn-cancel{
+  background:#fff; color:var(--text-sub); border:1px solid var(--border); border-radius:12px;
+  padding:14px 18px; font-size:14px;
+}
+
+#map{height:calc(100vh - 130px); min-height:400px; border-radius:0;}
+.empty-msg{text-align:center; color:var(--text-sub); font-size:13px; padding:40px 0;}
+
+.fab{
+  position:fixed; right:18px; bottom:24px; width:58px; height:58px; border-radius:50%;
+  background:var(--accent); color:#fff; font-size:28px; border:none; box-shadow:0 4px 12px rgba(90,60,30,0.3);
+  z-index:55; display:flex; align-items:center; justify-content:center;
+}
+.search-box{margin-bottom:12px;}
+.filter-row{display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:10px;}
+.filter-row .tag-chip{cursor:pointer; flex-shrink:0;}
+.filter-row .tag-chip.selected{background:var(--accent); color:#fff;}
+
+.leaflet-popup-content{font-size:13px; line-height:1.5;}
+.leaflet-popup-content img{width:100%; border-radius:8px; margin-bottom:4px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📍 現調メモ</h1>
+  <span class="sync-status" id="syncStatus">同期中…</span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-view="listView">一覧</div>
+  <div class="tab" data-view="mapView">地図</div>
+</div>
+
+<main>
+  <!-- 一覧ビュー -->
+  <div class="view active" id="listView">
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="メモ・相手・タグで検索">
+    </div>
+    <div class="filter-row" id="filterRow"></div>
+    <div id="entryList"></div>
+  </div>
+
+  <!-- 地図ビュー -->
+  <div class="view" id="mapView">
+    <div id="map"></div>
+  </div>
+
+  <!-- 入力ビュー -->
+  <div class="view" id="formView">
+    <div class="card">
+      <label>写真</label>
+      <div class="photo-buttons">
+        <label class="photo-btn">📷 撮影する
+          <input type="file" accept="image/*" capture="environment" id="cameraInput" style="display:none">
+        </label>
+        <label class="photo-btn">🖼 既存の写真
+          <input type="file" accept="image/*" id="galleryInput" style="display:none">
+        </label>
+      </div>
+      <div id="photoPreviewWrap" style="display:none;" class="photo-preview-wrap">
+        <img id="photoPreview" class="photo-preview">
+        <button class="photo-remove" id="photoRemoveBtn">✕</button>
+      </div>
+      <div class="gps-info" id="gpsInfo"></div>
+
+      <label>登録日時</label>
+      <input type="datetime-local" id="dateInput">
+
+      <label>現調種別タグ（複数選択可・新規入力もOK）</label>
+      <div class="tag-input-row">
+        <input type="text" id="newTagInput" placeholder="新しいタグを入力してEnter">
+        <button class="btn-small" id="addTagBtn">追加</button>
+      </div>
+      <div class="tag-pool" id="tagPool"></div>
+
+      <label>伝えたい相手</label>
+      <input type="text" id="targetInput" placeholder="例：〇〇市 道路管理課 〇〇様">
+
+      <label>メモ</label>
+      <textarea id="memoInput" placeholder="現場の状況、気づいた点など"></textarea>
+    </div>
+  </div>
+</main>
+
+<button class="fab" id="fabAdd">＋</button>
+
+<div class="save-bar" id="saveBar" style="display:none;">
+  <button class="btn-cancel" id="cancelBtn">キャンセル</button>
+  <button class="btn-main" id="saveBtn">保存する</button>
+</div>
+
+<script>
+/* ==================== Firebase設定 ====================
+  ここに自分のFirebaseプロジェクトの設定を入れてください。
+  Firebaseコンソール → プロジェクトの設定 → 全般 → マイアプリ で取得できます。
+  Realtime Database と Storage を有効化しておいてください。
+======================================================== */
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+let db, storage, useFirebase = true;
+try {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.database();
+  storage = firebase.storage();
+} catch(e){
+  useFirebase = false;
+  console.warn("Firebase未設定のためローカル保存モードで動作します", e);
+}
+
+const LOCAL_KEY = "genchoumemo_entries_v1";
+const LOCAL_TAG_KEY = "genchoumemo_tags_v1";
+
+let entries = {};   // id -> entry
+let tagPoolList = []; // 蓄積タグ一覧
+let selectedTags = [];
+let currentPhotoDataUrl = null;
+let currentPhotoGPS = null; // {lat, lng}
+let editingId = null;
+let mapInstance = null;
+let mapMarkers = [];
+let activeFilterTags = [];
+
+/* ---------- ユーティリティ ---------- */
+function uid(){ return 'e' + Date.now() + Math.random().toString(36).slice(2,8); }
+function formatDT(iso){
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.getFullYear()+"/"+String(d.getMonth()+1).padStart(2,'0')+"/"+String(d.getDate()).padStart(2,'0')+
+    " "+String(d.getHours()).padStart(2,'0')+":"+String(d.getMinutes()).padStart(2,'0');
+}
+function nowLocalInputValue(){
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0,16);
+}
+
+/* ---------- データ読み書き ---------- */
+function saveEntriesLocal(){
+  localStorage.setItem(LOCAL_KEY, JSON.stringify(entries));
+}
+function saveTagsLocal(){
+  localStorage.setItem(LOCAL_TAG_KEY, JSON.stringify(tagPoolList));
+}
+
+function initData(){
+  if (useFirebase){
+    db.ref('entries').on('value', snap => {
+      entries = snap.val() || {};
+      document.getElementById('syncStatus').textContent = '同期済み';
+      renderList();
+      renderMap();
+    }, err => {
+      document.getElementById('syncStatus').textContent = '同期エラー';
+      console.error(err);
+    });
+    db.ref('tags').on('value', snap => {
+      tagPoolList = snap.val() || [];
+      renderTagPool();
+      renderFilterRow();
+    });
+  } else {
+    entries = JSON.parse(localStorage.getItem(LOCAL_KEY) || "{}");
+    tagPoolList = JSON.parse(localStorage.getItem(LOCAL_TAG_KEY) || "[]");
+    document.getElementById('syncStatus').textContent = 'ローカル保存';
+    renderList();
+    renderMap();
+    renderTagPool();
+    renderFilterRow();
+  }
+}
+
+function addTagToPool(tag){
+  tag = tag.trim();
+  if (!tag) return;
+  if (tagPoolList.includes(tag)) return;
+  tagPoolList.push(tag);
+  if (useFirebase){
+    db.ref('tags').set(tagPoolList);
+  } else {
+    saveTagsLocal();
+    renderTagPool();
+    renderFilterRow();
+  }
+}
+
+function persistEntry(entry){
+  entries[entry.id] = entry;
+  if (useFirebase){
+    db.ref('entries/'+entry.id).set(entry);
+  } else {
+    saveEntriesLocal();
+    renderList();
+    renderMap();
+  }
+}
+function deleteEntry(id){
+  delete entries[id];
+  if (useFirebase){
+    db.ref('entries/'+id).remove();
+  } else {
+    saveEntriesLocal();
+    renderList();
+    renderMap();
+  }
+}
+
+/* ---------- タブ切り替え ---------- */
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    document.getElementById(tab.dataset.view).classList.add('active');
+    document.getElementById('fabAdd').style.display = 'flex';
+    document.getElementById('saveBar').style.display = 'none';
+    if (tab.dataset.view === 'mapView'){
+      setTimeout(()=>{ if(mapInstance) mapInstance.invalidateSize(); }, 100);
+    }
+  });
+});
+
+/* ---------- 一覧描画 ---------- */
+function renderTagPool(){
+  const pool = document.getElementById('tagPool');
+  pool.innerHTML = '';
+  tagPoolList.forEach(tag=>{
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip' + (selectedTags.includes(tag) ? ' selected' : '');
+    chip.textContent = tag;
+    chip.addEventListener('click', ()=>{
+      if (selectedTags.includes(tag)){
+        selectedTags = selectedTags.filter(t=>t!==tag);
+      } else {
+        selectedTags.push(tag);
+      }
+      renderTagPool();
+    });
+    pool.appendChild(chip);
+  });
+}
+
+function renderFilterRow(){
+  const row = document.getElementById('filterRow');
+  row.innerHTML = '';
+  tagPoolList.forEach(tag=>{
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip' + (activeFilterTags.includes(tag) ? ' selected' : '');
+    chip.textContent = tag;
+    chip.addEventListener('click', ()=>{
+      if (activeFilterTags.includes(tag)){
+        activeFilterTags = activeFilterTags.filter(t=>t!==tag);
+      } else {
+        activeFilterTags.push(tag);
+      }
+      renderFilterRow();
+      renderList();
+    });
+    row.appendChild(chip);
+  });
+}
+
+function getFilteredSortedEntries(){
+  const q = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+  let list = Object.values(entries);
+  if (q){
+    list = list.filter(e =>
+      (e.memo||'').toLowerCase().includes(q) ||
+      (e.target||'').toLowerCase().includes(q) ||
+      (e.tags||[]).some(t=>t.toLowerCase().includes(q))
+    );
+  }
+  if (activeFilterTags.length){
+    list = list.filter(e => activeFilterTags.every(t => (e.tags||[]).includes(t)));
+  }
+  list.sort((a,b)=> new Date(b.date) - new Date(a.date));
+  return list;
+}
+
+function renderList(){
+  const listEl = document.getElementById('entryList');
+  const list = getFilteredSortedEntries();
+  if (!list.length){
+    listEl.innerHTML = '<div class="empty-msg">まだ記録がありません。右下の＋から追加できます。</div>';
+    return;
+  }
+  listEl.innerHTML = '';
+  list.forEach(e=>{
+    const card = document.createElement('div');
+    card.className = 'card entry-card';
+    card.innerHTML = `
+      ${e.photo ? `<img class="entry-thumb" src="${e.photo}">` : `<div class="entry-thumb noimg">📍</div>`}
+      <div class="entry-body">
+        <div class="entry-date">${formatDT(e.date)}</div>
+        <div class="entry-tags">${(e.tags||[]).map(t=>`<span class="tag-chip">${escapeHtml(t)}</span>`).join('')}</div>
+        <div class="entry-target">${e.target ? '👤 '+escapeHtml(e.target) : ''}</div>
+        <div class="entry-memo">${escapeHtml(e.memo||'')}</div>
+      </div>
+    `;
+    card.addEventListener('click', ()=> openEditForm(e.id));
+    listEl.appendChild(card);
+  });
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+document.getElementById('searchInput').addEventListener('input', renderList);
+
+/* ---------- 地図描画 ---------- */
+function renderMap(){
+  if (!mapInstance){
+    mapInstance = L.map('map').setView([35.5, 139.4], 11); // 町田市周辺デフォルト
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(mapInstance);
+  }
+  mapMarkers.forEach(m=>mapInstance.removeLayer(m));
+  mapMarkers = [];
+  const withGps = Object.values(entries).filter(e=>e.lat && e.lng);
+  withGps.forEach(e=>{
+    const marker = L.marker([e.lat, e.lng]).addTo(mapInstance);
+    marker.bindPopup(`
+      ${e.photo ? `<img src="${e.photo}">` : ''}
+      <b>${formatDT(e.date)}</b><br>
+      ${(e.tags||[]).map(t=>escapeHtml(t)).join('・')}<br>
+      ${e.target ? '👤 '+escapeHtml(e.target)+'<br>' : ''}
+      ${escapeHtml(e.memo||'')}
+    `);
+    mapMarkers.push(marker);
+  });
+  if (withGps.length){
+    const group = L.featureGroup(mapMarkers);
+    mapInstance.fitBounds(group.getBounds().pad(0.2));
+  }
+}
+
+/* ---------- フォーム操作 ---------- */
+function resetForm(){
+  editingId = null;
+  currentPhotoDataUrl = null;
+  currentPhotoGPS = null;
+  selectedTags = [];
+  document.getElementById('photoPreviewWrap').style.display = 'none';
+  document.getElementById('gpsInfo').textContent = '';
+  document.getElementById('gpsInfo').className = 'gps-info';
+  document.getElementById('dateInput').value = nowLocalInputValue();
+  document.getElementById('targetInput').value = '';
+  document.getElementById('memoInput').value = '';
+  document.getElementById('newTagInput').value = '';
+  renderTagPool();
+}
+
+function openAddForm(){
+  resetForm();
+  showFormView();
+}
+function openEditForm(id){
+  const e = entries[id];
+  if (!e) return;
+  editingId = id;
+  currentPhotoDataUrl = e.photo || null;
+  currentPhotoGPS = (e.lat && e.lng) ? {lat:e.lat, lng:e.lng} : null;
+  selectedTags = (e.tags || []).slice();
+  if (e.photo){
+    document.getElementById('photoPreview').src = e.photo;
+    document.getElementById('photoPreviewWrap').style.display = 'block';
+  } else {
+    document.getElementById('photoPreviewWrap').style.display = 'none';
+  }
+  updateGpsInfo();
+  const d = new Date(e.date);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  document.getElementById('dateInput').value = isNaN(d) ? nowLocalInputValue() : d.toISOString().slice(0,16);
+  document.getElementById('targetInput').value = e.target || '';
+  document.getElementById('memoInput').value = e.memo || '';
+  renderTagPool();
+  showFormView();
+}
+function showFormView(){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('formView').classList.add('active');
+  document.getElementById('fabAdd').style.display = 'none';
+  document.getElementById('saveBar').style.display = 'flex';
+}
+function backToList(){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('listView').classList.add('active');
+  document.querySelector('.tab[data-view="listView"]').classList.add('active');
+  document.getElementById('fabAdd').style.display = 'flex';
+  document.getElementById('saveBar').style.display = 'none';
+}
+
+document.getElementById('fabAdd').addEventListener('click', openAddForm);
+document.getElementById('cancelBtn').addEventListener('click', backToList);
+
+/* ---------- 写真処理 & GPS抽出 ---------- */
+function updateGpsInfo(){
+  const gi = document.getElementById('gpsInfo');
+  if (currentPhotoGPS){
+    gi.textContent = `📍 GPS取得済み (${currentPhotoGPS.lat.toFixed(5)}, ${currentPhotoGPS.lng.toFixed(5)})`;
+    gi.className = 'gps-info ok';
+  } else if (currentPhotoDataUrl){
+    gi.textContent = 'この写真にはGPS情報がありません';
+    gi.className = 'gps-info ng';
+  } else {
+    gi.textContent = '';
+    gi.className = 'gps-info';
+  }
+}
+
+function convertDMSToDD(dms, ref){
+  if (!dms) return null;
+  const deg = dms[0], min = dms[1], sec = dms[2];
+  let dd = deg + min/60 + sec/3600;
+  if (ref === 'S' || ref === 'W') dd = dd * -1;
+  return dd;
+}
+
+function handlePhotoFile(file){
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev){
+    currentPhotoDataUrl = ev.target.result;
+    document.getElementById('photoPreview').src = currentPhotoDataUrl;
+    document.getElementById('photoPreviewWrap').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+
+  currentPhotoGPS = null;
+  EXIF.getData(file, function(){
+    const lat = EXIF.getTag(this, "GPSLatitude");
+    const latRef = EXIF.getTag(this, "GPSLatitudeRef");
+    const lng = EXIF.getTag(this, "GPSLongitude");
+    const lngRef = EXIF.getTag(this, "GPSLongitudeRef");
+    if (lat && lng){
+      const ddLat = convertDMSToDD(lat, latRef);
+      const ddLng = convertDMSToDD(lng, lngRef);
+      if (ddLat !== null && ddLng !== null){
+        currentPhotoGPS = { lat: ddLat, lng: ddLng };
+      }
+    }
+    updateGpsInfo();
+  });
+}
+
+document.getElementById('cameraInput').addEventListener('change', e=> handlePhotoFile(e.target.files[0]));
+document.getElementById('galleryInput').addEventListener('change', e=> handlePhotoFile(e.target.files[0]));
+document.getElementById('photoRemoveBtn').addEventListener('click', ()=>{
+  currentPhotoDataUrl = null;
+  currentPhotoGPS = null;
+  document.getElementById('photoPreviewWrap').style.display = 'none';
+  document.getElementById('cameraInput').value = '';
+  document.getElementById('galleryInput').value = '';
+  updateGpsInfo();
+});
+
+/* ---------- タグ追加 ---------- */
+function submitNewTag(){
+  const input = document.getElementById('newTagInput');
+  const val = input.value.trim();
+  if (!val) return;
+  addTagToPool(val);
+  if (!selectedTags.includes(val)) selectedTags.push(val);
+  input.value = '';
+  renderTagPool();
+}
+document.getElementById('addTagBtn').addEventListener('click', submitNewTag);
+document.getElementById('newTagInput').addEventListener('keydown', e=>{
+  if (e.key === 'Enter'){ e.preventDefault(); submitNewTag(); }
+});
+
+/* ---------- 保存 ---------- */
+document.getElementById('saveBtn').addEventListener('click', ()=>{
+  const dateVal = document.getElementById('dateInput').value;
+  const entry = {
+    id: editingId || uid(),
+    date: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
+    photo: currentPhotoDataUrl || null,
+    lat: currentPhotoGPS ? currentPhotoGPS.lat : null,
+    lng: currentPhotoGPS ? currentPhotoGPS.lng : null,
+    tags: selectedTags.slice(),
+    target: document.getElementById('targetInput').value.trim(),
+    memo: document.getElementById('memoInput').value.trim(),
+    createdAt: editingId && entries[editingId] ? entries[editingId].createdAt : new Date().toISOString()
+  };
+  persistEntry(entry);
+  backToList();
+});
+
+/* 削除は編集画面から長押しで（シンプルにするため、メモ欄下の非表示要素は使わず、編集時は上書き保存のみ。
+   削除したい場合はメモを空にして保存 or 一覧から長押し削除を用意） */
+document.getElementById('entryList')?.addEventListener('contextmenu', e=>e.preventDefault());
+
+// 長押しで削除（一覧のカードに対して）
+let pressTimer = null;
+document.getElementById('entryList').addEventListener('touchstart', e=>{
+  const card = e.target.closest('.entry-card');
+  if (!card) return;
+});
+
+/* シンプルな削除導線：編集フォームに削除ボタンを動的追加 */
+(function addDeleteButtonSupport(){
+  const saveBar = document.getElementById('saveBar');
+  const delBtn = document.createElement('button');
+  delBtn.textContent = '削除';
+  delBtn.style.display = 'none';
+  delBtn.className = 'btn-cancel';
+  delBtn.style.color = '#c0605a';
+  delBtn.addEventListener('click', ()=>{
+    if (editingId && confirm('この記録を削除しますか？')){
+      deleteEntry(editingId);
+      backToList();
+    }
+  });
+  saveBar.insertBefore(delBtn, document.getElementById('saveBtn'));
+  const origOpenEdit = openEditForm;
+  window.openEditForm = function(id){
+    origOpenEdit(id);
+    delBtn.style.display = 'block';
+  };
+  const origOpenAdd = openAddForm;
+  window.openAddForm = function(){
+    origOpenAdd();
+    delBtn.style.display = 'none';
+  };
+})();
+
+/* ---------- 初期化 ---------- */
+document.getElementById('dateInput').value = nowLocalInputValue();
+initData();
+</script>
+</body>
+</html>
