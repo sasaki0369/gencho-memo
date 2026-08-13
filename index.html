@@ -17,6 +17,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
 <!-- Leaflet (地図) -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -198,9 +199,42 @@ textarea{resize:vertical; min-height:80px;}
   position:absolute; bottom:calc(16px + env(safe-area-inset-bottom)); left:0; right:0;
   text-align:center; color:rgba(255,255,255,.6); font-size:12px; z-index:310; pointer-events:none;
 }
+
+/* --- ログイン画面 --- */
+.login-overlay{
+  position:fixed; inset:0; background:var(--bg); z-index:400;
+  display:none; align-items:center; justify-content:center; flex-direction:column; padding:24px;
+}
+.login-overlay.active{display:flex;}
+.login-box{
+  background:var(--card); border:1px solid var(--border); border-radius:16px;
+  padding:36px 28px; text-align:center; box-shadow:var(--shadow); max-width:320px; width:100%;
+}
+.login-box .login-icon{font-size:44px; margin-bottom:8px;}
+.login-box h2{margin:0 0 6px; font-size:18px; color:var(--accent-dark);}
+.login-box p{margin:0 0 20px; font-size:13px; color:var(--text-sub); line-height:1.6;}
+.google-signin-btn{
+  display:inline-flex; align-items:center; gap:10px; background:#fff; color:#3c4043;
+  border:1px solid #dadce0; border-radius:10px; padding:11px 20px; font-size:14px; font-weight:600;
+}
+.google-signin-btn svg{width:18px; height:18px;}
+.login-error{color:var(--danger); font-size:12px; margin-top:14px; display:none;}
 </style>
 </head>
 <body>
+
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <div class="login-icon">👷</div>
+    <h2>現場メモ</h2>
+    <p>このアプリはGoogleアカウントでのログインが必要です</p>
+    <button type="button" id="googleSignInBtn" class="google-signin-btn">
+      <svg viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 6.1 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 6.1 29.5 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.5-5.2l-6.2-5.2C29.3 35.4 26.8 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.6 39.6 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.2 5.6l6.2 5.2C40.5 36 44 30.5 44 24c0-1.3-.1-2.7-.4-3.5z"/></svg>
+      Googleでログイン
+    </button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
 
 <header>
   <h1>👷 現場メモ</h1>
@@ -290,19 +324,21 @@ textarea{resize:vertical; min-height:80px;}
 
 <script>
 /* ==================== Firebase設定 ====================
-  ここに自分のFirebaseプロジェクトの設定を入れてください。
-  Firebaseコンソール → プロジェクトの設定 → 全般 → マイアプリ で取得できます。
-  Realtime Database と Storage を有効化しておいてください。
+  life--logプロジェクト配下で運用。他アプリ(訪問録・飲みメモ等)とデータが
+  混在しないよう、このアプリのデータは DATA_ROOT 配下にまとめる。
+  Realtime Databaseのルールは auth != null を前提としているため、
+  匿名認証でサインインしてからデータ読み書きを行う。
 ======================================================== */
 const firebaseConfig = {
-  apiKey: "AIzaSyCzw3RUr0ewF_3u_TTxHLS-6hkig1EXs6U",
-  authDomain: "gencho-memo.firebaseapp.com",
-  databaseURL: "https://gencho-memo-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "gencho-memo",
-  storageBucket: "gencho-memo.firebasestorage.app",
-  messagingSenderId: "367700011953",
-  appId: "1:367700011953:web:916413aa765a230078ab90"
+  apiKey: "AIzaSyAxVn7JUuoBsNeSODksNYyEkd2W2E252_c",
+  authDomain: "life--log.firebaseapp.com",
+  databaseURL: "https://life--log-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "life--log",
+  storageBucket: "life--log.firebasestorage.app",
+  messagingSenderId: "790653257684",
+  appId: "1:790653257684:web:dd84bf5e0a38db328f3841"
 };
+const DATA_ROOT = 'genbaMemo'; // 他アプリのデータと衝突しないための専用階層
 
 let db, storage, useFirebase = true;
 try {
@@ -350,23 +386,60 @@ function saveTagsLocal(){
   localStorage.setItem(LOCAL_TAG_KEY, JSON.stringify(tagPoolList));
 }
 
+const ALLOWED_EMAIL = 'sasaki0369@gmail.com';
+
+function showLogin(message){
+  document.getElementById('loginOverlay').classList.add('active');
+  const errEl = document.getElementById('loginError');
+  if (message){
+    errEl.textContent = message;
+    errEl.style.display = 'block';
+  } else {
+    errEl.style.display = 'none';
+  }
+}
+function hideLogin(){
+  document.getElementById('loginOverlay').classList.remove('active');
+}
+
+function subscribeFirebaseData(){
+  db.ref(DATA_ROOT + '/entries').on('value', snap => {
+    entries = snap.val() || {};
+    document.getElementById('syncStatus').textContent = '同期済み';
+    renderList();
+    renderMap();
+  }, err => {
+    document.getElementById('syncStatus').textContent = '同期エラー';
+    console.error(err);
+    if (err.code === 'PERMISSION_DENIED'){
+      alert('データへのアクセスが拒否されました。ログイン中のGoogleアカウントが許可されたアカウント（' + ALLOWED_EMAIL + '）と一致しているか確認してください。');
+    } else {
+      alert('データの読み込みに失敗しました：' + err.message);
+    }
+  });
+  db.ref(DATA_ROOT + '/tags').on('value', snap => {
+    tagPoolList = snap.val() || [];
+    renderTagPool();
+    renderFilterRow();
+  }, err => console.error('タグ読み込みエラー', err));
+}
+
 function initData(){
   if (useFirebase){
-    db.ref('entries').on('value', snap => {
-      entries = snap.val() || {};
-      document.getElementById('syncStatus').textContent = '同期済み';
-      renderList();
-      renderMap();
-    }, err => {
-      document.getElementById('syncStatus').textContent = '同期エラー';
-      console.error(err);
-      alert('データの読み込みに失敗しました：' + err.message + '\n\nFirebase Realtime Databaseの「ルール」タブで読み書きが許可されているか確認してください（テストモードなら通常は自動許可されています）。');
+    document.getElementById('syncStatus').textContent = '認証確認中…';
+    firebase.auth().getRedirectResult().catch(err => {
+      console.error('リダイレクトログイン失敗', err);
+      showLogin('ログインに失敗しました：' + err.message);
     });
-    db.ref('tags').on('value', snap => {
-      tagPoolList = snap.val() || [];
-      renderTagPool();
-      renderFilterRow();
-    }, err => console.error('タグ読み込みエラー', err));
+    firebase.auth().onAuthStateChanged(user => {
+      if (user){
+        hideLogin();
+        subscribeFirebaseData();
+      } else {
+        document.getElementById('syncStatus').textContent = '未ログイン';
+        showLogin();
+      }
+    });
   } else {
     entries = JSON.parse(localStorage.getItem(LOCAL_KEY) || "{}");
     tagPoolList = JSON.parse(localStorage.getItem(LOCAL_TAG_KEY) || "[]");
@@ -384,7 +457,7 @@ function addTagToPool(tag){
   if (tagPoolList.includes(tag)) return;
   tagPoolList.push(tag);
   if (useFirebase){
-    db.ref('tags').set(tagPoolList).catch(err=>{
+    db.ref(DATA_ROOT + '/tags').set(tagPoolList).catch(err=>{
       console.error('タグ保存エラー', err);
       alert('タグの保存に失敗しました：' + err.message + '\n\nFirebase Realtime Databaseの「ルール」で読み書きが許可されているか確認してください。');
     });
@@ -399,7 +472,7 @@ function persistEntry(entry){
   entries[entry.id] = entry;
   if (useFirebase){
     document.getElementById('syncStatus').textContent = '保存中…';
-    db.ref('entries/'+entry.id).set(entry)
+    db.ref(DATA_ROOT + '/entries/'+entry.id).set(entry)
       .then(()=>{
         document.getElementById('syncStatus').textContent = '同期済み';
       })
@@ -417,7 +490,7 @@ function persistEntry(entry){
 function deleteEntry(id){
   delete entries[id];
   if (useFirebase){
-    db.ref('entries/'+id).remove().catch(err=>{
+    db.ref(DATA_ROOT + '/entries/'+id).remove().catch(err=>{
       console.error('削除に失敗', err);
       alert('削除に失敗しました：' + err.message);
     });
@@ -1088,6 +1161,25 @@ document.getElementById('entryList').addEventListener('touchstart', e=>{
     applyTransform();
   }, { passive: false });
 })();
+
+/* ---------- Googleログイン ---------- */
+if (useFirebase){
+  document.getElementById('googleSignInBtn').addEventListener('click', ()=>{
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ login_hint: ALLOWED_EMAIL });
+    firebase.auth().signInWithPopup(provider).catch(err => {
+      console.error('Googleログイン失敗', err);
+      if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user'){
+        // ポップアップが使えない環境ではリダイレクト方式にフォールバック
+        firebase.auth().signInWithRedirect(provider).catch(err2 => {
+          showLogin('ログインに失敗しました：' + err2.message);
+        });
+      } else {
+        showLogin('ログインに失敗しました：' + err.message);
+      }
+    });
+  });
+}
 
 /* ---------- 初期化 ---------- */
 document.getElementById('dateInput').value = nowLocalInputValue();
