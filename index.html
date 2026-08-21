@@ -511,7 +511,12 @@ document.querySelectorAll('.tab').forEach(tab=>{
     document.getElementById('fabAdd').style.display = 'flex';
     document.getElementById('saveBar').style.display = 'none';
     if (tab.dataset.view === 'mapView'){
-      setTimeout(()=>{ if(mapInstance) mapInstance.invalidateSize(); }, 100);
+      setTimeout(()=>{
+        if (mapInstance){
+          mapInstance.invalidateSize();
+          fitMapToMarkers();
+        }
+      }, 100);
     }
   });
 });
@@ -639,7 +644,15 @@ function renderMap(){
     `);
     mapMarkers.push(marker);
   });
-  if (withGps.length){
+  fitMapToMarkers();
+}
+
+// 現在プロットされている全マーカーが収まるようにズーム・中心を合わせる
+function fitMapToMarkers(){
+  if (!mapInstance || !mapMarkers.length) return;
+  if (mapMarkers.length === 1){
+    mapInstance.setView(mapMarkers[0].getLatLng(), 16);
+  } else {
     const group = L.featureGroup(mapMarkers);
     mapInstance.fitBounds(group.getBounds().pad(0.2));
   }
