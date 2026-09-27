@@ -26,6 +26,10 @@
 <!-- EXIF読み取り -->
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
 
+<!-- PDF報告書生成 -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+
 <style>
 :root{
   --bg:#f6f1e7;
@@ -93,7 +97,7 @@ main{padding:14px; max-width:640px; margin:0 auto;}
 /* --- フォーム --- */
 label{display:block; font-size:13px; font-weight:700; color:var(--accent-dark); margin:16px 0 6px;}
 label:first-child{margin-top:0;}
-input[type=text], input[type=datetime-local], textarea{
+input[type=text], input[type=datetime-local], textarea, select{
   width:100%; padding:11px 12px; border:1px solid var(--border); border-radius:10px;
   font-size:15px; background:#fff; color:var(--text); font-family:inherit;
 }
@@ -219,9 +223,48 @@ textarea{resize:vertical; min-height:80px;}
 }
 .google-signin-btn svg{width:18px; height:18px;}
 .login-error{color:var(--danger); font-size:12px; margin-top:14px; display:none;}
+
+/* --- 報告書プレビュー --- */
+.report-slot-card{
+  background:var(--card); border:1px solid var(--border); border-radius:14px;
+  padding:14px; margin-bottom:12px; box-shadow:var(--shadow);
+}
+.report-slot-time{font-size:14px; font-weight:700; color:var(--accent-dark); margin-bottom:8px;}
+.report-slot-photos{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;}
+.report-slot-photos img{width:72px; height:72px; object-fit:cover; border-radius:8px; background:var(--accent-light);}
+.report-slot-empty-note{font-size:12px; color:var(--text-sub); margin-bottom:8px;}
+.report-slot-textarea{
+  width:100%; min-height:70px; padding:10px; border:1px solid var(--border); border-radius:10px;
+  font-size:14px; font-family:inherit; resize:vertical;
+}
+.report-empty-msg{text-align:center; color:var(--text-sub); font-size:13px; padding:30px 0;}
+
+/* --- PDF描画用オフスクリーンコンテナ(html2canvasでラスタライズするための実体DOM) --- */
+#reportPdfContainer{
+  position:fixed; top:0; left:-99999px; width:794px; background:#ffffff; color:#1a1208;
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
+  padding:48px 44px;
+}
+#reportPdfContainer .pdf-header{border-bottom:3px solid #b5764a; padding-bottom:16px; margin-bottom:24px;}
+#reportPdfContainer .pdf-title{font-size:26px; font-weight:700; margin:0 0 6px;}
+#reportPdfContainer .pdf-subtitle{font-size:16px; color:#5a4a38; margin:0 0 10px;}
+#reportPdfContainer .pdf-meta{font-size:13px; color:#8a7a68;}
+#reportPdfContainer .pdf-slot{margin-bottom:28px; page-break-inside:avoid;}
+#reportPdfContainer .pdf-slot-time{
+  font-size:17px; font-weight:700; color:#8f5a35; border-left:6px solid #e8a33d;
+  padding:4px 10px; margin-bottom:10px;
+}
+#reportPdfContainer .pdf-slot-photos{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;}
+#reportPdfContainer .pdf-slot-photos img{
+  width:170px; height:128px; object-fit:cover; border-radius:6px; border:1px solid #e6dcc9;
+}
+#reportPdfContainer .pdf-slot-memo{font-size:14px; line-height:1.8; white-space:pre-wrap;}
+#reportPdfContainer .pdf-slot-tags{font-size:12px; color:#8a7a68; margin-bottom:6px;}
 </style>
 </head>
 <body>
+
+<div id="reportPdfContainer"></div>
 
 <div class="login-overlay" id="loginOverlay">
   <div class="login-box">
@@ -244,6 +287,7 @@ textarea{resize:vertical; min-height:80px;}
 <div class="tabs">
   <div class="tab active" data-view="listView">一覧</div>
   <div class="tab" data-view="mapView">地図</div>
+  <div class="tab" data-view="reportView">報告書</div>
 </div>
 
 <main>
@@ -259,6 +303,36 @@ textarea{resize:vertical; min-height:80px;}
   <!-- 地図ビュー -->
   <div class="view" id="mapView">
     <div id="map"></div>
+  </div>
+
+  <!-- 報告書ビュー -->
+  <div class="view" id="reportView">
+    <div class="card">
+      <label>対象日</label>
+      <select id="reportDateSelect"></select>
+
+      <label>時間の区切り方</label>
+      <select id="reportIntervalSelect">
+        <option value="30">30分ごと</option>
+        <option value="60" selected>1時間ごと</option>
+        <option value="120">2時間ごと</option>
+        <option value="180">3時間ごと</option>
+        <option value="360">6時間ごと</option>
+        <option value="1440">区切らない（1つにまとめる）</option>
+      </select>
+
+      <label>報告書タイトル</label>
+      <input type="text" id="reportTitleInput" placeholder="例：〇〇まつり実施報告書" value="実施報告書">
+
+      <label>件名・場所（任意）</label>
+      <input type="text" id="reportSubtitleInput" placeholder="例：〇〇町内会 夏祭り会場">
+
+      <button type="button" id="buildReportPreviewBtn" class="btn-main" style="margin-top:16px;">プレビュー作成</button>
+    </div>
+
+    <div id="reportPreviewArea"></div>
+
+    <button type="button" id="generatePdfBtn" class="btn-main" style="display:none; margin:4px 0 24px;">📄 PDFを作成</button>
   </div>
 
   <!-- 入力ビュー -->
@@ -508,7 +582,7 @@ document.querySelectorAll('.tab').forEach(tab=>{
     tab.classList.add('active');
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
     document.getElementById(tab.dataset.view).classList.add('active');
-    document.getElementById('fabAdd').style.display = 'flex';
+    document.getElementById('fabAdd').style.display = (tab.dataset.view === 'reportView') ? 'none' : 'flex';
     document.getElementById('saveBar').style.display = 'none';
     if (tab.dataset.view === 'mapView'){
       setTimeout(()=>{
@@ -517,6 +591,9 @@ document.querySelectorAll('.tab').forEach(tab=>{
           fitMapToMarkers();
         }
       }, 100);
+    }
+    if (tab.dataset.view === 'reportView'){
+      populateReportDateSelect();
     }
   });
 });
@@ -657,6 +734,194 @@ function fitMapToMarkers(){
     mapInstance.fitBounds(group.getBounds().pad(0.2));
   }
 }
+
+/* ---------- 報告書(PDF) ---------- */
+// タイムゾーンのずれを避けるため、ローカル日付コンポーネントから "YYYY-MM-DD" を作る
+function toLocalDateStr(dateObj){
+  const d = new Date(dateObj);
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function formatDateJp(dateStr){
+  const [y,m,d] = dateStr.split('-').map(Number);
+  return `${y}年${m}月${d}日`;
+}
+function formatHM(dateObj){
+  const d = new Date(dateObj);
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+function populateReportDateSelect(){
+  const sel = document.getElementById('reportDateSelect');
+  const prevValue = sel.value;
+  const counts = {};
+  Object.values(entries).forEach(e=>{
+    const key = toLocalDateStr(e.date);
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  const dates = Object.keys(counts).sort((a,b)=> b.localeCompare(a));
+  sel.innerHTML = '';
+  if (!dates.length){
+    sel.innerHTML = '<option value="">記録がありません</option>';
+    return;
+  }
+  dates.forEach(dateStr=>{
+    const opt = document.createElement('option');
+    opt.value = dateStr;
+    opt.textContent = `${formatDateJp(dateStr)}（${counts[dateStr]}件）`;
+    sel.appendChild(opt);
+  });
+  if (dates.includes(prevValue)) sel.value = prevValue;
+}
+
+// 選択した日・区切り間隔で、その日のレコードを時間帯ごとにまとめる
+function buildReportSlots(dateStr, intervalMinutes){
+  const dayEntries = Object.values(entries)
+    .filter(e => toLocalDateStr(e.date) === dateStr)
+    .sort((a,b)=> new Date(a.date) - new Date(b.date));
+
+  const buckets = new Map(); // bucketIndex -> {entries:[]}
+  dayEntries.forEach(e=>{
+    const d = new Date(e.date);
+    const minutesSinceMidnight = d.getHours()*60 + d.getMinutes();
+    const bucketIndex = Math.floor(minutesSinceMidnight / intervalMinutes);
+    if (!buckets.has(bucketIndex)) buckets.set(bucketIndex, []);
+    buckets.get(bucketIndex).push(e);
+  });
+
+  const sortedIndexes = Array.from(buckets.keys()).sort((a,b)=>a-b);
+  return sortedIndexes.map(idx=>{
+    const startMin = idx * intervalMinutes;
+    const endMin = Math.min(startMin + intervalMinutes, 24*60);
+    const label = intervalMinutes >= 1440
+      ? '終日'
+      : `${pad2(Math.floor(startMin/60))}:${pad2(startMin%60)}〜${pad2(Math.floor(endMin/60)%24)}:${pad2(endMin%60)}`;
+    const slotEntries = buckets.get(idx);
+    const photos = [];
+    slotEntries.forEach(e=>{
+      (e.photos || (e.photo ? [e.photo] : [])).forEach(p => photos.push(p));
+    });
+    const tagSet = new Set();
+    slotEntries.forEach(e => (e.tags||[]).forEach(t=>tagSet.add(t)));
+    const memoDraft = slotEntries
+      .map(e => e.memo)
+      .filter(Boolean)
+      .join('\n');
+    return { label, entries: slotEntries, photos, tags: Array.from(tagSet), memoDraft };
+  });
+}
+
+function renderReportPreview(slots){
+  const area = document.getElementById('reportPreviewArea');
+  area.innerHTML = '';
+  if (!slots.length){
+    area.innerHTML = '<div class="report-empty-msg">この日の記録がありません。</div>';
+    document.getElementById('generatePdfBtn').style.display = 'none';
+    return;
+  }
+  slots.forEach((slot, idx)=>{
+    const card = document.createElement('div');
+    card.className = 'report-slot-card';
+    card.innerHTML = `
+      <div class="report-slot-time">${slot.label}${slot.tags.length ? '　'+slot.tags.map(t=>escapeHtml(t)).join('・') : ''}</div>
+      ${slot.photos.length
+        ? `<div class="report-slot-photos">${slot.photos.map(p=>`<img src="${p}">`).join('')}</div>`
+        : `<div class="report-slot-empty-note">この時間帯の写真はありません</div>`}
+      <textarea class="report-slot-textarea" id="reportSlotMemo${idx}" placeholder="この時間帯の状況（準備状況・混雑状況など）を記入してください">${escapeHtml(slot.memoDraft)}</textarea>
+    `;
+    area.appendChild(card);
+  });
+  document.getElementById('generatePdfBtn').style.display = 'block';
+}
+
+let currentReportSlots = [];
+
+document.getElementById('buildReportPreviewBtn').addEventListener('click', ()=>{
+  const dateStr = document.getElementById('reportDateSelect').value;
+  if (!dateStr){
+    alert('対象日を選択してください。');
+    return;
+  }
+  const intervalMinutes = parseInt(document.getElementById('reportIntervalSelect').value, 10);
+  currentReportSlots = buildReportSlots(dateStr, intervalMinutes);
+  renderReportPreview(currentReportSlots);
+});
+
+async function generateReportPdf(){
+  const btn = document.getElementById('generatePdfBtn');
+  const dateStr = document.getElementById('reportDateSelect').value;
+  if (!dateStr || !currentReportSlots.length) return;
+
+  // プレビューのテキストエリアから最新のメモ内容を取得
+  const slotsWithMemo = currentReportSlots.map((slot, idx)=>{
+    const ta = document.getElementById('reportSlotMemo' + idx);
+    return { ...slot, memo: ta ? ta.value : slot.memoDraft };
+  });
+
+  const title = document.getElementById('reportTitleInput').value.trim() || '実施報告書';
+  const subtitle = document.getElementById('reportSubtitleInput').value.trim();
+  const today = new Date();
+
+  const container = document.getElementById('reportPdfContainer');
+  container.innerHTML = `
+    <div class="pdf-header">
+      <div class="pdf-title">${escapeHtml(title)}</div>
+      ${subtitle ? `<div class="pdf-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+      <div class="pdf-meta">対象日：${formatDateJp(dateStr)}　／　作成日：${toLocalDateStr(today).replace(/-/g,'/')}</div>
+    </div>
+    ${slotsWithMemo.map(slot => `
+      <div class="pdf-slot">
+        <div class="pdf-slot-time">${slot.label}</div>
+        ${slot.tags.length ? `<div class="pdf-slot-tags">タグ：${slot.tags.map(t=>escapeHtml(t)).join('・')}</div>` : ''}
+        ${slot.photos.length ? `<div class="pdf-slot-photos">${slot.photos.map(p=>`<img src="${p}">`).join('')}</div>` : ''}
+        ${slot.memo ? `<div class="pdf-slot-memo">${escapeHtml(slot.memo)}</div>` : ''}
+      </div>
+    `).join('')}
+  `;
+
+  btn.disabled = true;
+  btn.textContent = 'PDFを作成中…';
+  try {
+    // 画像の読み込み完了を待つ
+    const imgs = Array.from(container.querySelectorAll('img'));
+    await Promise.all(imgs.map(img => img.complete ? Promise.resolve() : new Promise(res=>{
+      img.onload = res; img.onerror = res;
+    })));
+
+    const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = 210, pageHeight = 297;
+    const imgWidth = pageWidth;
+    const imgHeight = canvas.height * imgWidth / canvas.width;
+    const imgData = canvas.toDataURL('image/jpeg', 0.92);
+
+    let heightLeft = imgHeight;
+    let position = 0;
+    pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+    heightLeft -= pageHeight;
+    while (heightLeft > 0){
+      position = heightLeft - imgHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+    }
+
+    const fileName = `${title}_${dateStr}.pdf`;
+    pdf.save(fileName);
+  } catch(err){
+    console.error('PDF作成に失敗', err);
+    alert('PDFの作成に失敗しました：' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📄 PDFを作成';
+    container.innerHTML = '';
+  }
+}
+
+document.getElementById('generatePdfBtn').addEventListener('click', generateReportPdf);
 
 /* ---------- フォーム操作 ---------- */
 function resetForm(){
