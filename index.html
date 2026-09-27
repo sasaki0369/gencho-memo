@@ -664,7 +664,7 @@ function renderList(){
   }
   listEl.innerHTML = '';
   list.forEach(e=>{
-    const photos = e.photos || (e.photo ? [e.photo] : []);
+    const photos = getPhotos(e).map(photoUrl);
     const card = document.createElement('div');
     card.className = 'card entry-card';
     card.innerHTML = `
@@ -695,6 +695,18 @@ function renderList(){
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+// 写真データは {url, takenAt} 形式(新)と、生のdataURL文字列(旧データとの互換)の両方を扱う
+function getPhotos(e){
+  return e.photos || (e.photo ? [e.photo] : []);
+}
+function photoUrl(p){
+  return (typeof p === 'string') ? p : (p && p.url) || '';
+}
+function photoTakenAt(p){
+  return (p && typeof p === 'object' && p.takenAt) ? p.takenAt : null;
+}
+
 document.getElementById('searchInput').addEventListener('input', renderList);
 
 /* ---------- 地図描画 ---------- */
@@ -709,7 +721,7 @@ function renderMap(){
   mapMarkers = [];
   const withGps = Object.values(entries).filter(e=>e.lat && e.lng);
   withGps.forEach(e=>{
-    const photos = e.photos || (e.photo ? [e.photo] : []);
+    const photos = getPhotos(e).map(photoUrl);
     const marker = L.marker([e.lat, e.lng]).addTo(mapInstance);
     marker.bindPopup(`
       ${photos.length ? `<img src="${photos[0]}">` : ''}
@@ -776,33 +788,45 @@ function populateReportDateSelect(){
   if (dates.includes(prevValue)) sel.value = prevValue;
 }
 
-// 選択した日・区切り間隔で、その日のレコードを時間帯ごとにまとめる
+// 選択した日・区切り間隔で、その日のレコードを時間帯ごとにまとめる。
+// タグ・メモは各レコードの「登録日時」基準、写真は写真ごとの実際の撮影時刻
+// (Exifから取得できなければ登録日時にフォールバック)基準で、それぞれ独立して振り分ける。
 function buildReportSlots(dateStr, intervalMinutes){
   const dayEntries = Object.values(entries)
     .filter(e => toLocalDateStr(e.date) === dateStr)
     .sort((a,b)=> new Date(a.date) - new Date(b.date));
 
-  const buckets = new Map(); // bucketIndex -> {entries:[]}
+  const textBuckets = new Map();  // bucketIndex -> [entries]（タグ・メモ用）
+  const photoBuckets = new Map(); // bucketIndex -> [photoUrl]（写真用）
+
   dayEntries.forEach(e=>{
-    const d = new Date(e.date);
-    const minutesSinceMidnight = d.getHours()*60 + d.getMinutes();
-    const bucketIndex = Math.floor(minutesSinceMidnight / intervalMinutes);
-    if (!buckets.has(bucketIndex)) buckets.set(bucketIndex, []);
-    buckets.get(bucketIndex).push(e);
+    const entryDate = new Date(e.date);
+    const entryMinutes = entryDate.getHours()*60 + entryDate.getMinutes();
+    const textIdx = Math.floor(entryMinutes / intervalMinutes);
+    if (!textBuckets.has(textIdx)) textBuckets.set(textIdx, []);
+    textBuckets.get(textIdx).push(e);
+
+    getPhotos(e).forEach(p=>{
+      const takenAtIso = photoTakenAt(p);
+      const timeSource = takenAtIso ? new Date(takenAtIso) : entryDate; // 撮影時刻が無ければ登録日時で代用
+      const mins = timeSource.getHours()*60 + timeSource.getMinutes();
+      const photoIdx = Math.floor(mins / intervalMinutes);
+      if (!photoBuckets.has(photoIdx)) photoBuckets.set(photoIdx, []);
+      photoBuckets.get(photoIdx).push(photoUrl(p));
+    });
   });
 
-  const sortedIndexes = Array.from(buckets.keys()).sort((a,b)=>a-b);
+  const allIndexes = new Set([...textBuckets.keys(), ...photoBuckets.keys()]);
+  const sortedIndexes = Array.from(allIndexes).sort((a,b)=>a-b);
+
   return sortedIndexes.map(idx=>{
     const startMin = idx * intervalMinutes;
     const endMin = Math.min(startMin + intervalMinutes, 24*60);
     const label = intervalMinutes >= 1440
       ? '終日'
       : `${pad2(Math.floor(startMin/60))}:${pad2(startMin%60)}〜${pad2(Math.floor(endMin/60)%24)}:${pad2(endMin%60)}`;
-    const slotEntries = buckets.get(idx);
-    const photos = [];
-    slotEntries.forEach(e=>{
-      (e.photos || (e.photo ? [e.photo] : [])).forEach(p => photos.push(p));
-    });
+    const slotEntries = textBuckets.get(idx) || [];
+    const photos = photoBuckets.get(idx) || [];
     const tagSet = new Set();
     slotEntries.forEach(e => (e.tags||[]).forEach(t=>tagSet.add(t)));
     const memoDraft = slotEntries
@@ -948,7 +972,7 @@ function openEditForm(id){
   const e = entries[id];
   if (!e) return;
   editingId = id;
-  currentPhotos = (e.photos || (e.photo ? [e.photo] : [])).slice();
+  currentPhotos = getPhotos(e).map(p => ({ url: photoUrl(p), takenAt: photoTakenAt(p) }));
   currentPhotoGPS = (e.lat && e.lng) ? {lat:e.lat, lng:e.lng} : null;
   photoChosen = currentPhotos.length > 0;
   selectedTags = (e.tags || []).slice();
@@ -1137,12 +1161,12 @@ function drawOrientedImage(img, orientation, maxDim){
 function renderPhotoPreviewList(){
   const wrap = document.getElementById('photoPreviewList');
   wrap.innerHTML = '';
-  currentPhotos.forEach((dataUrl, idx)=>{
+  currentPhotos.forEach((photo, idx)=>{
     const item = document.createElement('div');
     item.className = 'photo-preview-item';
     const img = document.createElement('img');
-    img.src = dataUrl;
-    img.addEventListener('click', ()=> openPhotoViewer(currentPhotos, idx));
+    img.src = photo.url;
+    img.addEventListener('click', ()=> openPhotoViewer(currentPhotos.map(p=>p.url), idx));
     const removeBtn = document.createElement('button');
     removeBtn.className = 'photo-item-remove';
     removeBtn.textContent = '✕';
@@ -1173,17 +1197,19 @@ async function addSinglePhoto(file, allowAutoFill){
     }
   }
 
-  // 日時・向きの抽出
+  // 日時・向きの抽出（この写真自体が撮影された時刻を個別に記録する）
   let orientation = 1;
+  let takenAtIso = null;
   try {
     const tags = await exifr.parse(file, {
       pick: ['DateTimeOriginal','CreateDate','GPSDateStamp','GPSTimeStamp','Orientation']
     });
     if (tags){
       if (tags.Orientation) orientation = tags.Orientation;
-      if (allowAutoFill){
-        const photoDate = extractPhotoDateTime(tags);
-        if (photoDate){
+      const photoDate = extractPhotoDateTime(tags);
+      if (photoDate){
+        takenAtIso = photoDate.toISOString();
+        if (allowAutoFill){
           document.getElementById('dateInput').value = toLocalInputValue(photoDate);
         }
       }
@@ -1211,7 +1237,7 @@ async function addSinglePhoto(file, allowAutoFill){
     imgReader.readAsDataURL(file);
   });
 
-  currentPhotos.push(dataUrl);
+  currentPhotos.push({ url: dataUrl, takenAt: takenAtIso });
   renderPhotoPreviewList();
 }
 
