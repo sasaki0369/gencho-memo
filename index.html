@@ -237,8 +237,12 @@ textarea{resize:vertical; min-height:80px;}
   padding:14px; margin-bottom:12px; box-shadow:var(--shadow);
 }
 .report-slot-time{font-size:14px; font-weight:700; color:var(--accent-dark); margin-bottom:8px;}
-.report-slot-photos{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;}
-.report-slot-photos img{width:72px; height:72px; object-fit:cover; border-radius:8px; background:var(--accent-light);}
+.report-slot-photos{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;}
+.report-slot-photo-item{position:relative; width:72px; height:72px;}
+.report-slot-photo-item img{
+  width:100%; height:100%; object-fit:cover; border-radius:8px; cursor:zoom-in;
+  background:var(--accent-light);
+}
 .report-slot-empty-note{font-size:12px; color:var(--text-sub); margin-bottom:8px;}
 .report-slot-textarea{
   width:100%; min-height:70px; padding:10px; border:1px solid var(--border); border-radius:10px;
@@ -438,9 +442,10 @@ const LOCAL_TAG_KEY = "genchoumemo_tags_v1";
 let entries = {};   // id -> entry
 let tagPoolList = []; // 蓄積タグ一覧
 let selectedTags = [];
-let currentPhotos = []; // 圧縮済みdataURLの配列
+let currentPhotos = []; // {url, takenAt}の配列
 let currentPhotoGPS = null; // {lat, lng} (レコード全体で1つの位置)
 let photoChosen = false;
+let currentPhotoFileKeys = new Set(); // 同一ファイルの重複追加を防ぐための署名セット
 let editingId = null;
 let mapInstance = null;
 let mapMarkers = [];
@@ -856,13 +861,54 @@ function renderReportPreview(slots){
   slots.forEach((slot, idx)=>{
     const card = document.createElement('div');
     card.className = 'report-slot-card';
-    card.innerHTML = `
-      <div class="report-slot-time">${slot.label}${slot.tags.length ? '　'+slot.tags.map(t=>escapeHtml(t)).join('・') : ''}</div>
-      ${slot.photos.length
-        ? `<div class="report-slot-photos">${slot.photos.map(p=>`<img src="${p}">`).join('')}</div>`
-        : `<div class="report-slot-empty-note">この時間帯の写真はありません</div>`}
-      <textarea class="report-slot-textarea" id="reportSlotMemo${idx}" placeholder="この時間帯の状況（準備状況・混雑状況など）を記入してください">${escapeHtml(slot.memoDraft)}</textarea>
-    `;
+
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'report-slot-time';
+    timeDiv.textContent = slot.label + (slot.tags.length ? '　' + slot.tags.join('・') : '');
+    card.appendChild(timeDiv);
+
+    if (slot.photos.length){
+      const photosDiv = document.createElement('div');
+      photosDiv.className = 'report-slot-photos';
+      slot.photos.forEach((url, photoIdx)=>{
+        const item = document.createElement('div');
+        item.className = 'report-slot-photo-item';
+        const img = document.createElement('img');
+        img.src = url;
+        img.addEventListener('click', ()=> openPhotoViewer(slot.photos, photoIdx));
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'photo-item-remove';
+        removeBtn.textContent = '✕';
+        removeBtn.title = 'この報告書から除外（登録データは削除されません）';
+        removeBtn.addEventListener('click', (ev)=>{
+          ev.stopPropagation();
+          // 再描画でテキストエリアの入力内容が失われないよう、現在の値を先に保存しておく
+          currentReportSlots.forEach((s, i)=>{
+            const ta = document.getElementById('reportSlotMemo' + i);
+            if (ta) s.memoDraft = ta.value;
+          });
+          slot.photos.splice(photoIdx, 1);
+          renderReportPreview(currentReportSlots);
+        });
+        item.appendChild(img);
+        item.appendChild(removeBtn);
+        photosDiv.appendChild(item);
+      });
+      card.appendChild(photosDiv);
+    } else {
+      const emptyNote = document.createElement('div');
+      emptyNote.className = 'report-slot-empty-note';
+      emptyNote.textContent = 'この時間帯の写真はありません';
+      card.appendChild(emptyNote);
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'report-slot-textarea';
+    textarea.id = 'reportSlotMemo' + idx;
+    textarea.placeholder = 'この時間帯の状況（準備状況・混雑状況など）を記入してください';
+    textarea.value = slot.memoDraft;
+    card.appendChild(textarea);
+
     area.appendChild(card);
   });
   document.getElementById('generatePdfBtn').style.display = 'block';
@@ -961,6 +1007,7 @@ function resetForm(){
   currentPhotos = [];
   currentPhotoGPS = null;
   photoChosen = false;
+  currentPhotoFileKeys = new Set();
   selectedTags = [];
   renderPhotoPreviewList();
   document.getElementById('locationPickerMapWrap').style.display = 'none';
@@ -983,6 +1030,7 @@ function openEditForm(id){
   currentPhotos = getPhotos(e).map(p => ({ url: photoUrl(p), takenAt: photoTakenAt(p) }));
   currentPhotoGPS = (e.lat && e.lng) ? {lat:e.lat, lng:e.lng} : null;
   photoChosen = currentPhotos.length > 0;
+  currentPhotoFileKeys = new Set();
   selectedTags = (e.tags || []).slice();
   renderPhotoPreviewList();
   document.getElementById('locationPickerMapWrap').style.display = 'none';
@@ -1230,6 +1278,7 @@ function renderPhotoPreviewList(){
     removeBtn.textContent = '✕';
     removeBtn.addEventListener('click', (ev)=>{
       ev.stopPropagation();
+      if (photo.fileKey) currentPhotoFileKeys.delete(photo.fileKey);
       currentPhotos.splice(idx, 1);
       photoChosen = currentPhotos.length > 0;
       renderPhotoPreviewList();
@@ -1257,6 +1306,12 @@ function renderPhotoPreviewList(){
 }
 
 async function addSinglePhoto(file, allowAutoFill){
+  // 同一ファイルの重複追加を防止（ファイル名・サイズ・更新日時で判定）
+  const fileKey = `${file.name}|${file.size}|${file.lastModified}`;
+  if (currentPhotoFileKeys.has(fileKey)){
+    return false; // スキップ
+  }
+
   // GPS座標抽出 (exifr.gpsは内部でDMS→10進変換まで行ってくれるため安定)
   if (!currentPhotoGPS){
     try {
@@ -1321,8 +1376,10 @@ async function addSinglePhoto(file, allowAutoFill){
     imgReader.readAsDataURL(file);
   });
 
-  currentPhotos.push({ url: dataUrl, takenAt: takenAtIso });
+  currentPhotos.push({ url: dataUrl, takenAt: takenAtIso, fileKey });
+  currentPhotoFileKeys.add(fileKey);
   renderPhotoPreviewList();
+  return true;
 }
 
 async function addPhotoFiles(fileList){
@@ -1331,10 +1388,15 @@ async function addPhotoFiles(fileList){
   const allowAutoFill = currentPhotos.length === 0; // 最初の写真のときだけ日時を自動セット
   photoChosen = true;
   updateGpsInfo();
+  let skippedCount = 0;
   for (const file of files){
-    await addSinglePhoto(file, allowAutoFill);
+    const added = await addSinglePhoto(file, allowAutoFill);
+    if (!added) skippedCount++;
   }
   updateGpsInfo();
+  if (skippedCount > 0){
+    alert(`${skippedCount}件は既に追加済みの写真と判断し、重複登録をスキップしました。`);
+  }
 }
 
 document.getElementById('cameraInput').addEventListener('change', e=>{
@@ -1367,7 +1429,7 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   const entry = {
     id: editingId || uid(),
     date: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
-    photos: currentPhotos.slice(),
+    photos: currentPhotos.map(p => ({ url: p.url, takenAt: p.takenAt })),
     lat: currentPhotoGPS ? currentPhotoGPS.lat : null,
     lng: currentPhotoGPS ? currentPhotoGPS.lng : null,
     tags: selectedTags.slice(),
