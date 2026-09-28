@@ -1395,6 +1395,22 @@ function cleanupPhotoOnRemove(photo){
   }
 }
 
+// 指定時間内にpromiseが解決しない場合、fallbackValueで解決したことにする
+// (画像処理がまれに完了も失敗もせず固まるケースへの保険)
+function withTimeout(promise, ms, fallbackValue){
+  return new Promise((resolve)=>{
+    let settled = false;
+    const timer = setTimeout(()=>{
+      if (!settled){ settled = true; resolve(fallbackValue); }
+    }, ms);
+    Promise.resolve(promise).then(v=>{
+      if (!settled){ settled = true; clearTimeout(timer); resolve(v); }
+    }).catch(()=>{
+      if (!settled){ settled = true; clearTimeout(timer); resolve(fallbackValue); }
+    });
+  });
+}
+
 async function addSinglePhoto(file, allowAutoFill){
   // 同一ファイルの重複追加を防止（ファイル名・サイズ・更新日時で判定）
   const fileKey = `${file.name}|${file.size}|${file.lastModified}`;
@@ -1405,7 +1421,7 @@ async function addSinglePhoto(file, allowAutoFill){
   // GPS座標抽出 (exifr.gpsは内部でDMS→10進変換まで行ってくれるため安定)
   if (!currentPhotoGPS){
     try {
-      const gps = await exifr.gps(file);
+      const gps = await withTimeout(exifr.gps(file), 8000, null);
       if (gps && isFinite(gps.latitude) && isFinite(gps.longitude)){
         currentPhotoGPS = { lat: gps.latitude, lng: gps.longitude };
         updateGpsInfo();
@@ -1419,9 +1435,9 @@ async function addSinglePhoto(file, allowAutoFill){
   let orientation = 1;
   let takenAtIso = null;
   try {
-    const tags = await exifr.parse(file, {
+    const tags = await withTimeout(exifr.parse(file, {
       pick: ['DateTimeOriginal','CreateDate','GPSDateStamp','GPSTimeStamp','Orientation']
-    });
+    }), 8000, null);
     if (tags){
       if (tags.Orientation) orientation = tags.Orientation;
       const photoDate = extractPhotoDateTime(tags);
@@ -1448,14 +1464,15 @@ async function addSinglePhoto(file, allowAutoFill){
   }
 
   // 画像の圧縮・向き補正（Blobとして生成。base64化は行わずメモリ効率よく扱う）
-  const blob = await new Promise((resolve)=>{
+  // 20秒経っても完了/失敗どちらの応答もない場合は、元ファイルをそのまま使って先に進む
+  const blob = await withTimeout(new Promise((resolve)=>{
     const imgReader = new FileReader();
     imgReader.onload = function(ev){
       const img = new Image();
       img.onload = function(){
         try{
           const canvas = drawOrientedImage(img, orientation, 1600);
-          canvas.toBlob(b => resolve(b || null), 'image/jpeg', 0.75);
+          canvas.toBlob(b => resolve(b || file), 'image/jpeg', 0.75);
         } catch(e){
           console.error('画像の圧縮に失敗しました', e);
           resolve(file); // 圧縮できなければ元ファイルをそのまま使う
@@ -1464,8 +1481,9 @@ async function addSinglePhoto(file, allowAutoFill){
       img.onerror = () => resolve(file);
       img.src = ev.target.result;
     };
+    imgReader.onerror = () => resolve(file);
     imgReader.readAsDataURL(file);
-  });
+  }), 20000, file);
 
   const photoId = photoUid();
   const previewUrl = URL.createObjectURL(blob);
@@ -1522,24 +1540,34 @@ async function addPhotoFiles(fileList){
   const progressEl = document.getElementById('photoAddProgress');
   const showProgress = files.length > 3; // 数枚程度なら出さず、まとめて追加した時だけ表示
   let skippedCount = 0;
+  let errorCount = 0;
   let processed = 0;
   if (showProgress){
     progressEl.style.display = 'block';
     progressEl.textContent = `写真を処理中… (0/${files.length})`;
   }
   for (const file of files){
-    const added = await addSinglePhoto(file, allowAutoFill);
-    if (!added) skippedCount++;
+    try {
+      const added = await addSinglePhoto(file, allowAutoFill);
+      if (!added) skippedCount++;
+    } catch(e){
+      // 1枚の処理で予期しないエラーが起きても、バッチ全体を止めずに次の写真へ進む
+      console.error('写真の処理に失敗、スキップして続行します', file.name, e);
+      errorCount++;
+    }
     processed++;
     if (showProgress){
       progressEl.textContent = `写真を処理中… (${processed}/${files.length})`;
     }
   }
   if (showProgress){
-    progressEl.textContent = `完了：${files.length}枚中${files.length - skippedCount}枚を追加しました（バックグラウンドでアップロード中）`;
+    progressEl.textContent = `完了：${files.length}枚中${files.length - skippedCount - errorCount}枚を追加しました（バックグラウンドでアップロード中）`;
     setTimeout(()=>{ progressEl.style.display = 'none'; }, 4000);
   }
   updateGpsInfo();
+  if (errorCount > 0){
+    alert(`${errorCount}件の写真は処理中にエラーが発生したため追加できませんでした。`);
+  }
   if (skippedCount > 0){
     alert(`${skippedCount}件は既に追加済みの写真と判断し、重複登録をスキップしました。`);
   }
