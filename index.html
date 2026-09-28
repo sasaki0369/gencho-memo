@@ -109,8 +109,9 @@ textarea{resize:vertical; min-height:80px;}
   background:#fdf9f2; display:flex; align-items:center; justify-content:center;
   min-height:52px; text-align:center; font-size:13px; color:var(--accent-dark); font-weight:600;
 }
-.photo-preview-list{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;}
-.photo-preview-item{position:relative; width:88px; height:88px;}
+.photo-preview-list{display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;}
+.photo-preview-item{position:relative; width:88px;}
+.photo-preview-item .photo-thumb-wrap{position:relative; width:88px; height:88px;}
 .photo-preview-item img{
   width:100%; height:100%; object-fit:cover; border-radius:10px; cursor:zoom-in;
   background:var(--accent-light);
@@ -123,6 +124,12 @@ textarea{resize:vertical; min-height:80px;}
   position:absolute; bottom:4px; right:4px; background:rgba(0,0,0,.6); color:#fff;
   font-size:10px; padding:1px 6px; border-radius:10px; font-weight:700;
 }
+.photo-time-input{
+  width:100%; margin-top:4px; padding:3px 2px; border:1px solid var(--border); border-radius:6px;
+  font-size:11px; text-align:center; background:#fffdf8; color:var(--text);
+}
+.photo-time-input.unset{border-color:var(--danger); color:var(--danger); background:#fff5f4;}
+.photo-time-hint{font-size:11px; color:var(--text-sub); margin-top:8px; line-height:1.5;}
 .gps-info{font-size:12px; color:var(--text-sub); margin-top:6px;}
 .gps-info.ok{color:#4a7a4a;}
 .gps-info.ng{color:var(--danger);}
@@ -348,6 +355,7 @@ textarea{resize:vertical; min-height:80px;}
         </label>
       </div>
       <div id="photoPreviewList" class="photo-preview-list"></div>
+      <div class="photo-time-hint" id="photoTimeHint" style="display:none;">写真下の時刻は撮影時刻（Exif→ファイル名の順で自動取得。取得できない場合は赤枠）です。報告書はこの時刻ごとに写真を振り分けるので、違っていれば直接編集してください。</div>
       <div class="gps-info" id="gpsInfo"></div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
         <button type="button" id="useCurrentLocationBtn" class="btn-small" style="display:none;">📍 現在地を使う</button>
@@ -1132,6 +1140,34 @@ function extractPhotoDateTime(tags){
   return null;
 }
 
+// ファイル名から日時を推測する（Exifが無い/読めない写真向けのフォールバック）。
+// 例: IMG_20260927_105758.jpg / PXL_20260927_105758123.jpg / Screenshot_20260927-105758.png /
+//     20260927_105758.jpg / 2026-09-27 10.57.58.jpg
+function extractDateTimeFromFilename(name){
+  if (!name) return null;
+  const isValid = (mo,d,h,mi,s) => mo>=1 && mo<=12 && d>=1 && d<=31 && h<24 && mi<60 && s<60;
+
+  // YYYYMMDD[_-]HHMMSS（末尾にミリ秒等が続いても可）
+  let m = name.match(/(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
+  if (m){
+    const [, y, mo, d, h, mi, s] = m.map(Number);
+    if (isValid(mo,d,h,mi,s)){
+      const dt = new Date(y, mo-1, d, h, mi, s);
+      if (!isNaN(dt)) return dt;
+    }
+  }
+  // YYYY-MM-DD[ _]HH.MM.SS 等、区切り文字違いのパターン
+  m = name.match(/(\d{4})-(\d{2})-(\d{2})[ _](\d{2})[.\-:](\d{2})[.\-:](\d{2})/);
+  if (m){
+    const [, y, mo, d, h, mi, s] = m.map(Number);
+    if (isValid(mo,d,h,mi,s)){
+      const dt = new Date(y, mo-1, d, h, mi, s);
+      if (!isNaN(dt)) return dt;
+    }
+  }
+  return null;
+}
+
 // EXIF Orientationを考慮しつつ、長辺maxDimにリサイズ・JPEG圧縮してcanvasを返す
 function drawOrientedImage(img, orientation, maxDim){
   let w = img.naturalWidth, h = img.naturalHeight;
@@ -1158,12 +1194,34 @@ function drawOrientedImage(img, orientation, maxDim){
   return canvas;
 }
 
+// 写真の撮影時刻(takenAt)を <input type="time"> 用の "HH:MM" 文字列にする
+function isoToHM(iso){
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+// "HH:MM" 文字列と基準日(登録日時の日付部分)から、ISO日時文字列を組み立てる
+function hmToIso(hm, referenceDateValue){
+  const m = /^(\d{2}):(\d{2})$/.exec(hm || '');
+  if (!m) return null;
+  const base = referenceDateValue ? new Date(referenceDateValue) : new Date();
+  const d = isNaN(base) ? new Date() : base;
+  d.setHours(parseInt(m[1],10), parseInt(m[2],10), 0, 0);
+  return d.toISOString();
+}
+
 function renderPhotoPreviewList(){
   const wrap = document.getElementById('photoPreviewList');
+  const hint = document.getElementById('photoTimeHint');
   wrap.innerHTML = '';
+  hint.style.display = currentPhotos.length ? 'block' : 'none';
   currentPhotos.forEach((photo, idx)=>{
     const item = document.createElement('div');
     item.className = 'photo-preview-item';
+
+    const thumbWrap = document.createElement('div');
+    thumbWrap.className = 'photo-thumb-wrap';
     const img = document.createElement('img');
     img.src = photo.url;
     img.addEventListener('click', ()=> openPhotoViewer(currentPhotos.map(p=>p.url), idx));
@@ -1177,8 +1235,23 @@ function renderPhotoPreviewList(){
       renderPhotoPreviewList();
       updateGpsInfo();
     });
-    item.appendChild(img);
-    item.appendChild(removeBtn);
+    thumbWrap.appendChild(img);
+    thumbWrap.appendChild(removeBtn);
+
+    const timeInput = document.createElement('input');
+    timeInput.type = 'time';
+    timeInput.className = 'photo-time-input' + (photo.takenAt ? '' : ' unset');
+    timeInput.value = isoToHM(photo.takenAt) || isoToHM(document.getElementById('dateInput').value ? new Date(document.getElementById('dateInput').value).toISOString() : null);
+    timeInput.addEventListener('click', (ev)=> ev.stopPropagation());
+    timeInput.addEventListener('change', ()=>{
+      const refDate = document.getElementById('dateInput').value || new Date().toISOString();
+      const iso = hmToIso(timeInput.value, refDate);
+      currentPhotos[idx].takenAt = iso;
+      timeInput.classList.toggle('unset', !iso);
+    });
+
+    item.appendChild(thumbWrap);
+    item.appendChild(timeInput);
     wrap.appendChild(item);
   });
 }
@@ -1216,6 +1289,17 @@ async function addSinglePhoto(file, allowAutoFill){
     }
   } catch(e){
     console.warn('EXIF日時抽出失敗', e);
+  }
+
+  // Exifで撮影時刻が取れなければ、ファイル名から推測する
+  if (!takenAtIso){
+    const fileNameDate = extractDateTimeFromFilename(file.name);
+    if (fileNameDate){
+      takenAtIso = fileNameDate.toISOString();
+      if (allowAutoFill){
+        document.getElementById('dateInput').value = toLocalInputValue(fileNameDate);
+      }
+    }
   }
 
   // 画像の圧縮・向き補正
