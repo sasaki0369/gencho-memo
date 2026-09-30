@@ -1356,7 +1356,7 @@ function toLocalInputValue(dateObj){
 function extractPhotoDateTime(tags){
   const gpsDate = tags.GPSDateStamp;
   const gpsTime = tags.GPSTimeStamp;
-  if (gpsDate && gpsTime && gpsTime.length === 3){
+  if (gpsDate && gpsTime){
     let y, mo, da;
     if (typeof gpsDate === 'string'){
       const parts = gpsDate.split(':').map(n=>parseInt(n,10));
@@ -1364,8 +1364,21 @@ function extractPhotoDateTime(tags){
     } else if (gpsDate instanceof Date){
       y = gpsDate.getUTCFullYear(); mo = gpsDate.getUTCMonth(); da = gpsDate.getUTCDate();
     }
-    if (y != null){
-      const utcMs = Date.UTC(y, mo, da, Math.floor(gpsTime[0]), Math.floor(gpsTime[1]), Math.floor(gpsTime[2]));
+
+    // GPSTimeStampはexifrのバージョン・機種により "8:13:37" のような文字列で返る場合と
+    // [8, 13, 37] のような配列で返る場合の両方があるため、どちらにも対応する
+    let h, mi, s;
+    if (typeof gpsTime === 'string'){
+      const tParts = gpsTime.split(':').map(n=>parseFloat(n));
+      if (tParts.length === 3 && tParts.every(n=>!isNaN(n))){
+        [h, mi, s] = tParts;
+      }
+    } else if (Array.isArray(gpsTime) && gpsTime.length === 3 && gpsTime.every(n=>!isNaN(n))){
+      [h, mi, s] = gpsTime;
+    }
+
+    if (y != null && h != null){
+      const utcMs = Date.UTC(y, mo, da, Math.floor(h), Math.floor(mi), Math.floor(s));
       if (!isNaN(utcMs)) return new Date(utcMs);
     }
   }
