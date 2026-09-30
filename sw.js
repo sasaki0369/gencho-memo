@@ -1,4 +1,4 @@
-const CACHE_NAME = 'genba-memo-v17';
+const CACHE_NAME = 'genba-memo-v18';
 const APP_SHELL = [
   './',
   './index.html',
