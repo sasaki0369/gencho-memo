@@ -321,6 +321,9 @@ textarea{resize:vertical; min-height:80px;}
     </div>
     <div class="filter-row" id="filterRow"></div>
     <div id="entryList"></div>
+    <div style="text-align:center; margin:20px 0 8px;">
+      <button type="button" id="maintenanceBtn" style="background:none; border:none; color:var(--text-sub); font-size:12px; text-decoration:underline;">🧹 データ容量を確認・整理する</button>
+    </div>
   </div>
 
   <!-- 地図ビュー -->
@@ -663,6 +666,104 @@ function cleanupEntryPhotosFromStorage(entry){
     } catch(e){ /* 参照できない形式のURLは無視 */ }
   });
 }
+
+/* ---------- データ容量の診断・整理 ---------- */
+async function diagnoseAndMigrate(){
+  const ids = Object.keys(entries);
+  if (!ids.length){
+    alert('データがまだ読み込まれていません。同期が終わってからお試しください。');
+    return;
+  }
+
+  const sizes = ids.map(id => ({ id, size: JSON.stringify(entries[id]).length }));
+  sizes.sort((a,b)=> b.size - a.size);
+  const totalSize = sizes.reduce((sum,s)=>sum+s.size, 0);
+  const legacyCount = ids.reduce((count, id) => {
+    return count + getPhotos(entries[id]).filter(p => (photoUrl(p)||'').startsWith('data:')).length;
+  }, 0);
+
+  const top5 = sizes.slice(0, 5).map(s => {
+    const e = entries[s.id];
+    return `・${formatDT(e.date)}（約${(s.size/1024/1024).toFixed(2)}MB、写真${getPhotos(e).length}枚）`;
+  }).join('\n');
+
+  const message =
+    `全${ids.length}件、合計約${(totalSize/1024/1024).toFixed(2)}MB\n` +
+    `旧形式(データベースに直接埋め込まれた)写真：${legacyCount}枚\n\n` +
+    `データ量が大きいレコード上位5件：\n${top5}\n\n` +
+    (legacyCount > 0
+      ? '容量が大きいレコードは、内容を確認のうえ不要であれば一覧から削除することもできます。\n\n旧形式の写真をStorageへ移行して軽量化しますか？（通信環境によっては時間がかかります）'
+      : '旧形式の写真は見つかりませんでした。');
+
+  if (legacyCount > 0){
+    if (confirm(message)){
+      await migrateLegacyPhotosToStorage(legacyCount);
+    }
+  } else {
+    alert(message);
+  }
+}
+
+async function migrateLegacyPhotosToStorage(totalLegacyCount){
+  if (!useFirebase){
+    alert('この機能はFirebase同期時のみ使えます。');
+    return;
+  }
+  const btn = document.getElementById('maintenanceBtn');
+  const originalLabel = btn.textContent;
+  const ids = Object.keys(entries);
+  let migratedPhotos = 0, migratedEntries = 0, failedPhotos = 0;
+
+  for (const id of ids){
+    const entry = entries[id];
+    const photos = getPhotos(entry);
+    if (!photos.some(p => (photoUrl(p)||'').startsWith('data:'))) continue;
+
+    const newPhotos = [];
+    let changed = false;
+    for (const p of photos){
+      const url = photoUrl(p);
+      const takenAt = photoTakenAt(p);
+      if (url && url.startsWith('data:')){
+        btn.textContent = `移行中…(${migratedPhotos + 1}/${totalLegacyCount}枚)`;
+        try {
+          const blob = await (await fetch(url)).blob();
+          const downloadUrl = await uploadPhotoToStorage(blob, photoUid(), null);
+          newPhotos.push({ url: downloadUrl, takenAt });
+          migratedPhotos++;
+          changed = true;
+        } catch(e){
+          console.warn('写真の移行に失敗、元データのまま保持します', id, e);
+          newPhotos.push({ url, takenAt });
+          failedPhotos++;
+        }
+      } else {
+        newPhotos.push({ url, takenAt });
+      }
+    }
+    if (changed){
+      try {
+        await db.ref(DATA_ROOT + '/entries/' + id + '/photos').set(newPhotos);
+        migratedEntries++;
+      } catch(e){
+        console.error('レコードの更新に失敗', id, e);
+      }
+    }
+  }
+
+  btn.textContent = originalLabel;
+  alert(
+    `完了：${migratedEntries}件のレコード、${migratedPhotos}枚の写真をStorageへ移行しました。` +
+    (failedPhotos ? `\n${failedPhotos}枚は移行に失敗し、元のデータのまま残っています。` : '')
+  );
+}
+
+document.getElementById('maintenanceBtn').addEventListener('click', ()=>{
+  diagnoseAndMigrate().catch(e=>{
+    console.error('診断・移行処理でエラー', e);
+    alert('処理中にエラーが発生しました：' + e.message);
+  });
+});
 
 /* ---------- タブ切り替え ---------- */
 document.querySelectorAll('.tab').forEach(tab=>{
