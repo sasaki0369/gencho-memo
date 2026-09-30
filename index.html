@@ -648,6 +648,14 @@ function cleanupEntryPhotosFromStorage(entry){
 /* ---------- タブ切り替え ---------- */
 document.querySelectorAll('.tab').forEach(tab=>{
   tab.addEventListener('click', ()=>{
+    const formOpen = document.getElementById('formView').classList.contains('active');
+    if (formOpen){
+      const ok = confirm('編集中の内容は保存されていません。破棄して移動しますか？');
+      if (!ok) return;
+      // 破棄して移動する場合、このセッションで新規に追加した写真だけを後始末する
+      // (fileKeyが無いものは元々保存済みの写真なので、誤って消さないよう対象外にする)
+      currentPhotos.filter(p => p.fileKey).forEach(p => cleanupPhotoOnRemove(p));
+    }
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
     tab.classList.add('active');
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -1092,13 +1100,13 @@ function openEditForm(id){
   currentPhotoFileKeys = new Set();
   pendingUploads = [];
   selectedTags = (e.tags || []).slice();
+  const d = new Date(e.date);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  document.getElementById('dateInput').value = isNaN(d) ? nowLocalInputValue() : d.toISOString().slice(0,16);
   renderPhotoPreviewList();
   document.getElementById('photoAddProgress').style.display = 'none';
   document.getElementById('locationPickerMapWrap').style.display = 'none';
   updateGpsInfo();
-  const d = new Date(e.date);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  document.getElementById('dateInput').value = isNaN(d) ? nowLocalInputValue() : d.toISOString().slice(0,16);
   document.getElementById('targetInput').value = e.target || '';
   document.getElementById('memoInput').value = e.memo || '';
   renderTagPool();
@@ -1824,6 +1832,13 @@ if (useFirebase){
 /* ---------- 初期化 ---------- */
 document.getElementById('dateInput').value = nowLocalInputValue();
 initData();
+
+window.addEventListener('beforeunload', (e)=>{
+  if (document.getElementById('formView').classList.contains('active')){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
