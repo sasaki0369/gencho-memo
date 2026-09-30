@@ -532,13 +532,30 @@ function hideLogin(){
   document.getElementById('loginOverlay').classList.remove('active');
 }
 
+// syncStatusの表示が指定時間たっても特定の文言のまま変化しない場合、
+// 「読み込みに時間がかかっています」と再読み込みボタンを表示する保険
+function armSyncWatchdog(expectedText, ms){
+  return setTimeout(()=>{
+    const statusEl = document.getElementById('syncStatus');
+    if (statusEl.textContent === expectedText){
+      statusEl.innerHTML = '読み込みに時間がかかっています ' +
+        '<button id="syncReloadBtn" style="margin-left:4px; font-size:11px; padding:2px 8px; border-radius:6px; border:none; background:#fff; color:#8f5a35;">再読み込み</button>';
+      const btn = document.getElementById('syncReloadBtn');
+      if (btn) btn.addEventListener('click', ()=> location.reload());
+    }
+  }, ms);
+}
+
 function subscribeFirebaseData(){
+  const dataWatchdog = armSyncWatchdog('認証確認中…', 10000);
   db.ref(DATA_ROOT + '/entries').on('value', snap => {
+    clearTimeout(dataWatchdog);
     entries = snap.val() || {};
     document.getElementById('syncStatus').textContent = '同期済み';
     renderList();
     renderMap();
   }, err => {
+    clearTimeout(dataWatchdog);
     document.getElementById('syncStatus').textContent = '同期エラー';
     console.error(err);
     if (err.code === 'PERMISSION_DENIED'){
@@ -557,11 +574,13 @@ function subscribeFirebaseData(){
 function initData(){
   if (useFirebase){
     document.getElementById('syncStatus').textContent = '認証確認中…';
+    const authWatchdog = armSyncWatchdog('認証確認中…', 10000);
     firebase.auth().getRedirectResult().catch(err => {
       console.error('リダイレクトログイン失敗', err);
       showLogin('ログインに失敗しました：' + err.message);
     });
     firebase.auth().onAuthStateChanged(user => {
+      clearTimeout(authWatchdog);
       if (user){
         hideLogin();
         subscribeFirebaseData();
