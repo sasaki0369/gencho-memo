@@ -137,6 +137,10 @@ textarea{resize:vertical; min-height:80px;}
   font-size:11px; text-align:center; background:#fffdf8; color:var(--text);
 }
 .photo-time-input.unset{border-color:var(--danger); color:var(--danger); background:#fff5f4;}
+.photo-debug-btn{
+  width:100%; margin-top:3px; padding:2px 0; border:none; background:none;
+  color:var(--text-sub); font-size:10px; text-decoration:underline;
+}
 .photo-time-hint{font-size:11px; color:var(--text-sub); margin-top:8px; line-height:1.5;}
 .photo-add-progress{
   font-size:12px; color:var(--accent-dark); font-weight:700; margin-top:8px;
@@ -1503,6 +1507,28 @@ function renderPhotoPreviewList(){
 
     item.appendChild(thumbWrap);
     item.appendChild(timeInput);
+
+    if (!photo.takenAt && photo.debugInfo){
+      const debugBtn = document.createElement('button');
+      debugBtn.type = 'button';
+      debugBtn.className = 'photo-debug-btn';
+      debugBtn.textContent = '詳細';
+      debugBtn.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        const d = photo.debugInfo;
+        alert(
+          `【診断情報】\n` +
+          `ファイル名：${d.fileName}\n` +
+          `種類：${d.fileType}\n` +
+          `サイズ：${d.fileSizeKB}KB\n\n` +
+          `GPS：${d.gpsResult || '(未実行)'}${d.gpsError ? '\nGPSエラー：'+d.gpsError : ''}\n\n` +
+          `Exifタグ：${d.exifTags || '(未実行)'}${d.exifError ? '\nExifエラー：'+d.exifError : ''}\n\n` +
+          `ファイル名からの推測：${d.filenameMatch || '(未実行)'}`
+        );
+      });
+      item.appendChild(debugBtn);
+    }
+
     wrap.appendChild(item);
   });
 }
@@ -1546,15 +1572,28 @@ async function addSinglePhoto(file, allowAutoFill){
     return false; // スキップ
   }
 
+  const debugInfo = {
+    fileName: file.name || '(名前なし)',
+    fileType: file.type || '(不明)',
+    fileSizeKB: Math.round((file.size || 0) / 1024),
+    gpsResult: null,
+    gpsError: null,
+    exifTags: null,
+    exifError: null,
+    filenameMatch: null
+  };
+
   // GPS座標抽出 (exifr.gpsは内部でDMS→10進変換まで行ってくれるため安定)
   if (!currentPhotoGPS){
     try {
       const gps = await withTimeout(exifr.gps(file), 8000, null);
+      debugInfo.gpsResult = gps ? `${gps.latitude}, ${gps.longitude}` : '取得できず';
       if (gps && isFinite(gps.latitude) && isFinite(gps.longitude)){
         currentPhotoGPS = { lat: gps.latitude, lng: gps.longitude };
         updateGpsInfo();
       }
     } catch(e){
+      debugInfo.gpsError = String(e.message || e);
       console.warn('GPS抽出失敗', e);
     }
   }
@@ -1566,6 +1605,7 @@ async function addSinglePhoto(file, allowAutoFill){
     const tags = await withTimeout(exifr.parse(file, {
       pick: ['DateTimeOriginal','CreateDate','GPSDateStamp','GPSTimeStamp','Orientation']
     }), 8000, null);
+    debugInfo.exifTags = tags ? JSON.stringify(tags) : '(Exifデータなし)';
     if (tags){
       if (tags.Orientation) orientation = tags.Orientation;
       const photoDate = extractPhotoDateTime(tags);
@@ -1577,12 +1617,14 @@ async function addSinglePhoto(file, allowAutoFill){
       }
     }
   } catch(e){
+    debugInfo.exifError = String(e.message || e);
     console.warn('EXIF日時抽出失敗', e);
   }
 
   // Exifで撮影時刻が取れなければ、ファイル名から推測する
   if (!takenAtIso){
     const fileNameDate = extractDateTimeFromFilename(file.name);
+    debugInfo.filenameMatch = fileNameDate ? fileNameDate.toString() : '一致するパターンなし';
     if (fileNameDate){
       takenAtIso = fileNameDate.toISOString();
       if (allowAutoFill){
@@ -1617,7 +1659,8 @@ async function addSinglePhoto(file, allowAutoFill){
   const previewUrl = URL.createObjectURL(blob);
   const photoEntry = {
     url: previewUrl, takenAt: takenAtIso, fileKey, photoId,
-    objectUrl: previewUrl, uploading: useFirebase, uploadFailed: false, uploadTask: null
+    objectUrl: previewUrl, uploading: useFirebase, uploadFailed: false, uploadTask: null,
+    debugInfo
   };
   currentPhotos.push(photoEntry);
   currentPhotoFileKeys.add(fileKey);
